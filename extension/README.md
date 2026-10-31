@@ -25,4 +25,10 @@ In the extension directory, start the mock service with `npm run mock`. In the E
 
 Then run **BuildGuard: Scan Workspace**. The mock cycles through queued, running, and completed module states and returns a labelled fixture; it does not scan files. Do not use this token outside the local mock.
 
+### Demo report without a backend
+
+Run **BuildGuard: Show Demo Report (No Backend)** from the command palette to open the bundled sample report. It uses fictional data, does not connect to the service, does not scan workspace files, and does not add Problems diagnostics. You can still preview **BuildGuard: Export Report as HTML** with the demo report.
+
+To check that the demo report covers all seven finding categories and that the command and fixture are included in the extension package, run `npm run test:demo` from this directory. Then press F5 and run **BuildGuard: Show Demo Report (No Backend)** in the Extension Development Host.
+
 Package from the repository root with `make package`; the artifact is `buildguard-0.1.0.vsix`.
