@@ -16,3 +16,4 @@ __pycache__/
 # BuildGuard runtime data
 .buildguard/
 node_modules/
+test_samples/*/dist/

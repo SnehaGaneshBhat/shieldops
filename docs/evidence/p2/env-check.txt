@@ -1,0 +1,7 @@
+bash scripts/check_env.sh
+PASS git
+PASS python3.12
+PASS docker
+FAIL node20 - needed by P4 only
+FAIL syft - needed by P1 only
+make: *** [Makefile:12: setup] Error 1

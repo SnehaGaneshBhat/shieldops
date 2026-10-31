@@ -1,0 +1,3 @@
+- build_reproducible_c: Proves reproducible builds; expected result = MATCH.
+- build_unreproducible_c: Proves non-reproducible builds using timestamps; expected result = BUILD_MISMATCH with timestamp hint.
+- build_tampered_c: Proves post-build artifact tampering; expected result = POST_BUILD_DIFF after a one-byte edit.
