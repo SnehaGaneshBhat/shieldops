@@ -1,0 +1,11 @@
+{
+  "runtime_functions": ["_start", "_init", "_fini", "frame_dummy", "register_tm_clones", "deregister_tm_clones", "__do_global_dtors_aux", "_dl_relocate_static_pie", "__libc_csu_init", "__libc_csu_fini"],
+  "runtime_imports": ["__libc_start_main", "__gmon_start__", "_ITM_registerTMCloneTable", "_ITM_deregisterTMCloneTable", "__cxa_finalize", "__stack_chk_fail"],
+  "import_equivalents": {
+    "puts": ["printf", "puts"], "putchar": ["printf", "putchar", "puts"],
+    "__printf_chk": ["printf"], "__fprintf_chk": ["fprintf"],
+    "__isoc99_scanf": ["scanf"], "__isoc99_sscanf": ["sscanf"],
+    "__memcpy_chk": ["memcpy"], "__strcpy_chk": ["strcpy"]
+  },
+  "risky_imports": ["system", "popen", "execve", "execv", "execvp", "execl", "execlp", "fork", "connect", "socket", "send", "sendto", "recv", "gethostbyname", "getaddrinfo", "dlopen", "dlsym", "ptrace", "setuid", "setgid", "chmod", "kill"]
+}
