@@ -1,0 +1,116 @@
+{
+  "module": "dependency",
+  "status": "ok",
+  "findings": [
+    {
+      "id": "D-001",
+      "module": "dependency",
+      "category": "KNOWN_VULNERABILITY",
+      "severity": "HIGH",
+      "confidence": "CONFIRMED",
+      "subject": {
+        "ecosystem": "npm",
+        "name": "lodash",
+        "version": "4.17.20"
+      },
+      "title": "lodash 4.17.20: 5 OSV advisory record(s)",
+      "evidence": [
+        {
+          "type": "osv_advisory",
+          "rule_id": null,
+          "data": {
+            "id": "GHSA-29mw-wpgm-hmr9",
+            "aliases": [
+              "CVE-2020-28500"
+            ],
+            "summary": "Regular Expression Denial of Service (ReDoS) in lodash",
+            "fixed_in": [
+              "4.17.21"
+            ],
+            "severity": "MEDIUM"
+          },
+          "untrusted_text": []
+        },
+        {
+          "type": "osv_advisory",
+          "rule_id": null,
+          "data": {
+            "id": "GHSA-35jh-r3h4-6jhm",
+            "aliases": [
+              "CVE-2021-23337"
+            ],
+            "summary": "Command Injection in lodash",
+            "fixed_in": [
+              "4.17.21"
+            ],
+            "severity": "HIGH"
+          },
+          "untrusted_text": []
+        },
+        {
+          "type": "osv_advisory",
+          "rule_id": null,
+          "data": {
+            "id": "GHSA-f23m-r3pf-42rh",
+            "aliases": [
+              "CVE-2026-2950"
+            ],
+            "summary": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit`",
+            "fixed_in": [
+              "4.18.0"
+            ],
+            "severity": "MEDIUM"
+          },
+          "untrusted_text": []
+        },
+        {
+          "type": "osv_advisory",
+          "rule_id": null,
+          "data": {
+            "id": "GHSA-r5fr-rjxr-66jc",
+            "aliases": [
+              "CVE-2026-4800"
+            ],
+            "summary": "lodash vulnerable to Code Injection via `_.template` imports key names",
+            "fixed_in": [
+              "4.18.0"
+            ],
+            "severity": "HIGH"
+          },
+          "untrusted_text": []
+        },
+        {
+          "type": "osv_advisory",
+          "rule_id": null,
+          "data": {
+            "id": "GHSA-xxjr-mmjv-4gpg",
+            "aliases": [
+              "CVE-2025-13465"
+            ],
+            "summary": "Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions",
+            "fixed_in": [
+              "4.17.23"
+            ],
+            "severity": "MEDIUM"
+          },
+          "untrusted_text": []
+        }
+      ],
+      "file_hint": "package.json",
+      "line_hint": 6
+    }
+  ],
+  "errors": [],
+  "tool_versions": {
+    "syft": "1.55.0",
+    "osv_query_time": "2026-10-31T13:39:26Z"
+  },
+  "duration_ms": 1755,
+  "checks_performed": [
+    "manifest_discovery",
+    "syft_sbom",
+    "npm_lockfile_parse",
+    "osv_lookup",
+    "heuristics"
+  ]
+}

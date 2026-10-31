@@ -1,0 +1,9 @@
+[
+  "lodash", "express", "react", "react-dom", "axios", "chalk",
+  "commander", "debug", "moment", "request", "async", "underscore",
+  "vue", "webpack", "typescript", "eslint", "jquery", "uuid",
+  "tslib", "semver", "minimist", "yargs", "glob", "fs-extra",
+  "bluebird", "body-parser", "cors", "dotenv", "jest", "mocha",
+  "next", "prettier", "rxjs", "socket.io", "mongoose", "passport",
+  "redux", "babel-core", "core-js", "inquirer"
+]

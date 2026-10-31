@@ -1,0 +1,18 @@
+2026-10-31T13:39:24Z
+Python 3.12.3
+v20.20.2
+10.8.2
+Application:   syft
+Version:       1.55.0
+BuildDate:     2026-10-19T18:54:46Z
+GitCommit:     f15c3343e29dfb20cf6d82c820e7090b49808c96
+GitDescription: v1.55.0
+Platform:      linux/amd64
+GoVersion:     go1.26.8
+Compiler:      gc
+SchemaVersion: 16.1.11
+git version 2.43.0
+httpx 0.28.1
+rapidfuzz 3.14.6
+pydantic 2.14.2
+pytest 9.2.0

@@ -1,0 +1,4 @@
+[
+  "requests", "numpy", "pandas", "flask", "django",
+  "urllib3", "boto3", "pytest", "cryptography", "setuptools"
+]

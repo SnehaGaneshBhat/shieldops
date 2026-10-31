@@ -1,0 +1,49 @@
+{
+  "module": "dependency",
+  "status": "ok",
+  "findings": [
+    {
+      "id": "D-001",
+      "module": "dependency",
+      "category": "NO_KNOWN_ISSUES",
+      "severity": "INFO",
+      "confidence": "LOW",
+      "subject": {
+        "packages_checked": 1
+      },
+      "title": "No known issues detected by the checks performed",
+      "evidence": [
+        {
+          "type": "tool_output",
+          "rule_id": null,
+          "data": {
+            "checks": [
+              "manifest_discovery",
+              "syft_sbom",
+              "npm_lockfile_parse",
+              "osv_lookup",
+              "heuristics"
+            ],
+            "osv_query_time": "2026-10-31T13:39:30Z"
+          },
+          "untrusted_text": []
+        }
+      ],
+      "file_hint": null,
+      "line_hint": null
+    }
+  ],
+  "errors": [],
+  "tool_versions": {
+    "syft": "1.55.0",
+    "osv_query_time": "2026-10-31T13:39:30Z"
+  },
+  "duration_ms": 1292,
+  "checks_performed": [
+    "manifest_discovery",
+    "syft_sbom",
+    "npm_lockfile_parse",
+    "osv_lookup",
+    "heuristics"
+  ]
+}
