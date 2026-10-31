@@ -26,7 +26,8 @@ def check():
     return None
 
 
-def run_lab(sample_dir, out_dir, project_cc="clang", opt_level="-O0", strip=False, timeout=180):
+def run_lab(sample_dir, out_dir, project_cc="clang", opt_level="-O0", strip=False,
+            timeout=180, scan_id="adhoc"):
     if dr is None:
         raise LabError("TOOL_MISSING", "backend/docker_runner.py not found")
     try:
@@ -34,11 +35,15 @@ def run_lab(sample_dir, out_dir, project_cc="clang", opt_level="-O0", strip=Fals
             IMAGE, ["lab_run.sh"],
             mounts=[(str(sample_dir), "/work/sample", "ro"), (str(out_dir), "/out", "rw")],
             env={"PROJECT_CC": project_cc, "BG_OPT": opt_level, "BG_STRIP": "1" if strip else "0"},
-            network="none", timeout=timeout,
+            network_none=True, timeout=timeout, scan_id=scan_id,
         )
     except Exception as exc:
         raise LabError(getattr(exc, "code", "DOCKER_UNAVAILABLE"), getattr(exc, "message", str(exc)),
                        getattr(exc, "detail", "")) from exc
+    if result.timed_out or result.error == "TIMEOUT":
+        raise LabError("TIMEOUT", f"Compiler lab exceeded {timeout}s", result.stderr[-2000:])
+    if result.error:
+        raise LabError(result.error, "Compiler lab could not start", result.stderr[-2000:])
     if result.returncode != 0:
         raise LabError("PARSE_ERROR", "Compiler lab script failed", (result.stderr or result.stdout)[-2000:])
     return result.stdout

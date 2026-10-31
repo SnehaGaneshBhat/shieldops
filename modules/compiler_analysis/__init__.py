@@ -69,7 +69,8 @@ def run(sample_path, options=None):
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
         lab_adapter.run_lab(sample, out_dir, project_cc, opt_level=opt, strip=strip,
-                            timeout=options.get("timeout", 180))
+                            timeout=options.get("docker_timeout", options.get("timeout", 180)),
+                            scan_id=options.get("scan_id", "adhoc"))
     except lab_adapter.LabError as e:
         return fail(e.code, e.message, e.detail)
 

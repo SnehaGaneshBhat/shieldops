@@ -150,27 +150,34 @@ def _dump(f):
     return f.model_dump() if hasattr(f, 'model_dump') else dict(f)
 
 
-def _correlate(results):
+def _correlate(results, scan_id=None):
     try:
-        from modules.reporting import correlate  # P3
-
-        return correlate(list(results.values()))
-
-    except Exception:
-        pass
-
-    items = [
-        f
-        for r in results.values()
-        for f in r.findings
-    ]
-
-    items.sort(key=lambda f: SEV_ORDER.get(f.severity, 9))
-
-    for i, f in enumerate(items, 1):
-        f.id = f'F-{i:03d}'
-
-    return items
+        from modules.reporting.correlate import correlate  # P3
+    except ImportError:
+        findings = [
+            _dump(f)
+            for result in results.values()
+            for f in result.findings
+        ]
+        findings.sort(key=lambda f: SEV_ORDER.get(f['severity'], 9))
+        for index, finding in enumerate(findings, 1):
+            finding['source_id'] = finding['id']
+            finding['id'] = f'F-{index:03d}'
+        return {
+            'scan_id': scan_id or '',
+            'generated_at': _now(),
+            'tool_versions': {name: result.tool_versions for name, result in results.items()},
+            'module_status': {
+                name: {'status': result.status, 'errors': result.errors,
+                       'checks_performed': result.checks_performed}
+                for name, result in results.items()
+            },
+            'findings': findings,
+            'correlations': [],
+            'allowed_ids': [finding['id'] for finding in findings],
+            'simulation_present': any(finding.get('simulated') for finding in findings),
+        }
+    return correlate(list(results.values()), scan_id=scan_id)
 
 
 def _fallback_report(scan_id, findings):
@@ -205,11 +212,11 @@ def _fallback_report(scan_id, findings):
     }
 
 
-def _build_report(scan_id, findings, results, use_llm):
+def _build_report(scan_id, findings_doc, results, use_llm):
     try:
         from modules.reporting import build_report  # P3
 
-        rep = build_report(findings, use_llm)
+        rep = build_report(findings_doc, use_llm)
         report = (
             rep.model_dump()
             if hasattr(rep, 'model_dump')
@@ -217,7 +224,7 @@ def _build_report(scan_id, findings, results, use_llm):
         )
 
     except Exception:
-        report = _fallback_report(scan_id, findings)
+        report = _fallback_report(scan_id, findings_doc.get('findings', []))
 
     report['scan_id'] = scan_id
 
@@ -258,9 +265,16 @@ def _render_html(report):
                 'plain_explanation'
             )
         )
+        sim_notice = esc(it.get('simulation_notice', ''))
+        item_limits = esc(it.get('limitations', ''))
+        actions = ''.join(f'<li>{esc(action)}</li>' for action in it.get('recommended_actions', []))
+        sim_html = f'<p><strong>SIMULATION</strong> {sim_notice}</p>' if sim_notice else ''
+        limits_html = f'<p>{item_limits}</p>' if item_limits else ''
+        actions_html = f'<ul>{actions}</ul>' if actions else ''
 
         rows.append(
-            f'<li><b>{sev}</b> {cat}: {title}<br><small>{expl}</small></li>'
+            f'<li><b>{sev}</b> {cat}: {title}<br><small>{expl}</small>'
+            f'{sim_html}{limits_html}{actions_html}</li>'
         )
 
     mods = ''.join(
@@ -272,11 +286,16 @@ def _render_html(report):
         f'<li>{esc(x)}</li>'
         for x in report.get('limitations', [])
     )
+    simulation_banner = (
+        '<p><strong>SIMULATION:</strong> this report contains findings from a compiler wrapper created by the BuildGuard team for demonstration.</p>'
+        if report.get('simulation_present') else ''
+    )
 
     return (
         f'<!doctype html><meta charset=utf-8><title>BuildGuard report</title>'
         f'<h1>BuildGuard report {esc(report.get("scan_id"))}</h1>'
         f'<p>{esc(report.get("overall_summary"))}</p>'
+        f'{simulation_banner}'
         f'<h2>Findings</h2><ul>{"".join(rows)}</ul>'
         f'<h2>Module status</h2><ul>{mods}</ul>'
         f'<h2>Limitations</h2><ul>{lim}</ul>'
@@ -343,20 +362,17 @@ def _run_scan(scan_id, project_path, modules, options):
         return
 
     try:
-        findings = _correlate(results)
+        findings_doc = _correlate(results, scan_id=scan_id)
 
         store.write_json(
             scan_id,
             'findings.json',
-            {
-                'scan_id': scan_id,
-                'findings': [_dump(f) for f in findings]
-            }
+            findings_doc
         )
 
         report = _build_report(
             scan_id,
-            findings,
+            findings_doc,
             results,
             bool(options.get('use_llm'))
         )

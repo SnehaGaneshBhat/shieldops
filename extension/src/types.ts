@@ -42,6 +42,7 @@ export interface ReportItem {
   why_it_matters?: string;
   recommended_actions?: string[];
   limitations?: string;
+  simulation_notice?: string;
   explanation_source?: string;
   simulated?: boolean;
 }
@@ -56,6 +57,7 @@ export interface Report {
   limitations?: string[];
   global_limitations?: string[];
   explanation_source?: string;
+  simulation_present?: boolean;
 }
 
 export interface ScanRequest {

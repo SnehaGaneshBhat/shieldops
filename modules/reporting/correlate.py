@@ -17,6 +17,16 @@ def _cap_untrusted(finding):
         evidence["untrusted_text"] = cleaned[:10]
 
 
+def _as_dict(value):
+    if isinstance(value, dict):
+        return json.loads(json.dumps(value))
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if hasattr(value, "dict"):
+        return value.dict()
+    raise TypeError(f"Expected a mapping or Pydantic model, got {type(value).__name__}")
+
+
 def _final(finding, siblings):
     category, rules = finding["category"], _rules(finding)
     if category == "KNOWN_VULNERABILITY":
@@ -87,12 +97,13 @@ def _correlations(findings):
 
 def correlate(results, scan_id=None):
     findings, module_status, versions = [], {}, {}
-    for result in results:
+    for raw_result in results:
+        result = _as_dict(raw_result)
         module_status[result["module"]] = {"status": result["status"], "errors": result.get("errors", []),
                                            "checks_performed": result.get("checks_performed", [])}
         versions[result["module"]] = result.get("tool_versions", {})
-        for original in result.get("findings", []):
-            finding = json.loads(json.dumps(original))
+        for raw_finding in result.get("findings", []):
+            finding = _as_dict(raw_finding)
             finding["source_id"] = finding["id"]
             if result["status"] == "partial" and finding["category"] == "NO_KNOWN_ISSUES":
                 finding["category"], finding["title"] = "UNRESOLVED", "Checks incomplete for module " + result["module"]

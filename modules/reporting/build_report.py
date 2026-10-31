@@ -35,11 +35,18 @@ def build_report(findings_doc, use_llm=True):
         item.update(explanation)
         item["limitations"] = limitations(finding)
         item["simulation_notice"] = simulation_notice(finding)
+        item["explanation_source"] = explanation_source
         items.append(item)
+    by_category = {}
+    by_severity = {}
+    for item in items:
+        by_category[item["category"]] = by_category.get(item["category"], 0) + 1
+        by_severity[item["severity"]] = by_severity.get(item["severity"], 0) + 1
     return {
         "scan_id": findings_doc.get("scan_id"),
         "generated_at": findings_doc.get("generated_at"),
         "overall_summary": response["overall_summary"],
+        "summary_counts": {"by_category": by_category, "by_severity": by_severity},
         "explanation_source": explanation_source,
         "items": items,
         "correlations": findings_doc.get("correlations", []),
@@ -47,5 +54,5 @@ def build_report(findings_doc, use_llm=True):
         "tool_versions": findings_doc.get("tool_versions", {}),
         "allowed_ids": findings_doc.get("allowed_ids", []),
         "simulation_present": bool(findings_doc.get("simulation_present")),
-        "global_limitations": list(GLOBAL_LIMITATIONS),
+        "limitations": list(GLOBAL_LIMITATIONS),
     }

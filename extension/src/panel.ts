@@ -76,6 +76,7 @@ function card(item: ReportItem, reportSource?: string): string {
     ? 'AI explanation · checked against findings'
     : 'Template explanation';
   const subject = item.subject ?? {};
+  const simulationNotice = typeof item.simulation_notice === 'string' ? item.simulation_notice.trim() : '';
   const subjectName = typeof subject.name === 'string' ? subject.name : '';
   const subjectVersion = typeof subject.version === 'string' ? subject.version : '';
 
@@ -89,6 +90,7 @@ function card(item: ReportItem, reportSource?: string): string {
     ${explanation.plain_explanation ? `<p>${esc(explanation.plain_explanation)}</p>` : ''}
     ${explanation.why_it_matters ? `<p class="why"><strong>Why it matters</strong> ${esc(explanation.why_it_matters)}</p>` : ''}
     ${actions ? `<div class="action"><strong>Suggested next step</strong><ul>${actions}</ul></div>` : ''}
+    ${simulationNotice ? `<p class="simulation-notice"><strong>SIMULATION</strong> ${esc(simulationNotice)}</p>` : ''}
     ${explanation.limitations ? `<p class="limit">${esc(explanation.limitations)}</p>` : ''}
     <p class="source">${esc(source)}</p>
     <details><summary>Inspect evidence</summary><pre>${esc(JSON.stringify({ subject, evidence }, null, 2))}</pre></details>
@@ -139,6 +141,9 @@ function render(report: Report, standalone: boolean): string {
   const summary = issueCount
     ? `${issueCount} finding${issueCount === 1 ? '' : 's'} to review`
     : 'Checks complete';
+  const simulationBanner = report.simulation_present
+    ? '<aside class="simulation-banner"><strong>SIMULATION</strong> This report includes findings from a compiler wrapper made by the BuildGuard team for demonstration.</aside>'
+    : '';
 
   return `<!doctype html>
 <html><head><meta charset="UTF-8">
@@ -153,10 +158,11 @@ ${theme}
 .overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin:14px 0 30px}.module{border:1px solid var(--vscode-panel-border);border-radius:10px;padding:10px 13px;display:flex;justify-content:space-between;gap:10px;font-size:12px}.module b{font-weight:600;opacity:.82}
 .category{margin:26px 0 34px;padding-left:14px;border-left:2px solid #8492a6}.category.critical,.category.high{border-color:#e76c62}.category.violet{border-color:#bd8be9}.category.amber{border-color:#e2b35b}.category.green{border-color:#62ba92}.category-head{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:700;margin:0 0 13px}.count{font-size:11px;opacity:.65;border:1px solid var(--vscode-panel-border);border-radius:20px;padding:0 7px}
 .finding{border:1px solid var(--vscode-panel-border);border-radius:12px;padding:16px 18px;margin:10px 0;background:var(--vscode-editorWidget-background);box-shadow:0 5px 18px #0000000a}.finding-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.eyebrow{margin-right:auto}.pill{border-radius:20px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:.06em;background:#6b778522}.sev-critical,.sev-high{background:#ef776322;color:#f29189}.sev-medium{background:#e7ad3a22;color:#e7be70}.sev-low,.sev-info{background:#5ca5da22;color:#80bbe5}.sim{background:#71809633;color:#a9bad2}.finding h3{margin:7px 0 2px;font-size:16px}.facts,.source{font-size:10px;letter-spacing:.04em;margin:0 0 11px}.finding p{margin:9px 0}.why,.action{padding:10px 12px;border-radius:7px;background:var(--vscode-editor-background)}.action ul{margin:4px 0 0;padding-left:20px}.limit{font-size:12px;opacity:.72}.source{margin:12px 0 7px}details{border-top:1px solid var(--vscode-panel-border);padding-top:9px}summary{cursor:pointer;font-size:12px;opacity:.8}pre{overflow:auto;padding:12px;border-radius:8px;background:var(--vscode-textCodeBlock-background);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.simulation-banner,.simulation-notice{border:1px solid #b78a48;border-radius:8px;padding:10px 13px;background:#b78a4818;color:var(--vscode-foreground)}
 .empty{padding:22px;border:1px dashed var(--vscode-panel-border);border-radius:12px;opacity:.72}.limits{margin-top:34px;padding-top:20px;border-top:1px solid var(--vscode-panel-border)}.limits h2{font-size:15px}.limits li{font-size:12px;opacity:.8;margin:6px 0}@media(max-width:620px){body{padding:20px 16px}.hero{grid-template-columns:1fr}.metric{justify-self:start}.mast{align-items:flex-start;gap:12px}}
 </style></head><body>
 <header class="mast"><div class="brand"><div class="mark">B</div><div><p class="kicker">BuildGuard / Analysis</p><h1>Workspace report</h1></div></div>${exportButton}</header>
-<main><div class="hero"><div><h2>${summary}</h2><p>${esc(report.overall_summary)}</p><div class="meta">Scan ${esc(report.scan_id)} &nbsp;·&nbsp; ${esc(report.generated_at)}</div></div><div class="metric"><strong>${issueCount}</strong><span>Needs review</span></div></div>
+<main>${simulationBanner}<div class="hero"><div><h2>${summary}</h2><p>${esc(report.overall_summary)}</p><div class="meta">Scan ${esc(report.scan_id)} &nbsp;·&nbsp; ${esc(report.generated_at)}</div></div><div class="metric"><strong>${issueCount}</strong><span>Needs review</span></div></div>
 <h2 class="kicker">Module status</h2><div class="overview">${moduleStatus || '<div class="module">No module status provided</div>'}</div>
 ${sections || '<div class="empty">No findings were returned. Review module status and limitations below to understand which checks ran.</div>'}
 <div class="limits"><h2>Limits of this report</h2><ul>${limitations || '<li>Results cover only the checks that completed and the evidence they produced.</li>'}</ul></div></main>${script}</body></html>`;
