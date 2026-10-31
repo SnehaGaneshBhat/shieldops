@@ -84,3 +84,39 @@ def test_severity_and_fixed_versions():
     }
 
     assert fixed_versions(vulnerability) == ["2.0.0", "3.0.0"]
+
+
+def test_query_ids_handles_none_version(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(
+            200,
+            json={"results": [{"vulns": [{"id": "GHSA-unversioned"}]}]},
+        )
+
+    client = OSVClient(
+        tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+    package = ("npm", "lodash", None)
+
+    # Should safely compute cache key and query without TypeError
+    result, failed = client.query_ids([package])
+
+    assert result == {package: ["GHSA-unversioned"]}
+    assert failed == []
+    assert len(calls) == 1
+
+    # Second query hits cache
+    client.query_ids([package])
+    assert len(calls) == 1
+
+
+def test_offline_cache_miss_with_none_version(tmp_path):
+    client = OSVClient(tmp_path, offline=True)
+    package = ("npm", "lodash", None)
+
+    result, failed = client.query_ids([package])
+    assert result == {}
+    assert failed == [package]

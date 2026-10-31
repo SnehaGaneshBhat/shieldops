@@ -21,6 +21,9 @@ class OSVClient:
         self.offline = offline
         self.http = client or httpx.Client(timeout=20)
 
+    def _pkg_key(self, package):
+        return "|".join("" if part is None else str(part) for part in package)
+
     def _path(self, kind, key):
         digest = hashlib.sha1(key.encode()).hexdigest()
         return self.dir / f"{kind}_{digest}.json"
@@ -72,7 +75,7 @@ class OSVClient:
         while True:
             body = {
                 "package": {"name": name, "ecosystem": ecosystem},
-                "version": version,
+                **({"version": version} if version is not None else {}),
             }
             if token:
                 body["page_token"] = token
@@ -89,7 +92,7 @@ class OSVClient:
         todo = []
 
         for package in packages:
-            key = "|".join(package)
+            key = self._pkg_key(package)
             cached = self._read("q", key)
 
             if cached is not None:
@@ -110,7 +113,7 @@ class OSVClient:
             queries = [
                 {
                     "package": {"name": name, "ecosystem": ecosystem},
-                    "version": version,
+                    **({"version": version} if version is not None else {}),
                 }
                 for ecosystem, name, version in chunk
             ]
@@ -134,7 +137,7 @@ class OSVClient:
                     else:
                         ids = [v["id"] for v in result.get("vulns", [])]
 
-                    key = "|".join(package)
+                    key = self._pkg_key(package)
                     self._write("q", key, ids)
                     output[package] = ids
 
@@ -157,18 +160,107 @@ class OSVClient:
         return result
 
 
+def cvss_score_from_vector(vector):
+    import math
+    parts = dict(p.split(":") for p in str(vector).split("/") if ":" in p)
+    scope_changed = parts.get("S") == "C"
+
+    c_map = {"N": 0.0, "L": 0.22, "H": 0.56}
+    av_map = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
+    ac_map = {"L": 0.77, "H": 0.44}
+    ui_map = {"N": 0.85, "R": 0.62}
+    pr_map_u = {"N": 0.85, "L": 0.62, "H": 0.27}
+    pr_map_c = {"N": 0.85, "L": 0.68, "H": 0.50}
+
+    c = c_map.get(parts.get("C", "N"), 0.0)
+    i = c_map.get(parts.get("I", "N"), 0.0)
+    a = c_map.get(parts.get("A", "N"), 0.0)
+
+    iss = 1.0 - ((1.0 - c) * (1.0 - i) * (1.0 - a))
+    if iss <= 0:
+        return 0.0
+
+    if scope_changed:
+        impact = 7.52 * (iss - 0.029) - 3.25 * ((iss - 0.02) ** 15)
+        pr = pr_map_c.get(parts.get("PR", "N"), 0.85)
+    else:
+        impact = 6.42 * iss
+        pr = pr_map_u.get(parts.get("PR", "N"), 0.85)
+
+    av = av_map.get(parts.get("AV", "N"), 0.85)
+    ac = ac_map.get(parts.get("AC", "L"), 0.77)
+    ui = ui_map.get(parts.get("UI", "N"), 0.85)
+
+    exploitability = 8.22 * av * ac * pr * ui
+
+    if scope_changed:
+        score = min(1.08 * (impact + exploitability), 10.0)
+    else:
+        score = min(impact + exploitability, 10.0)
+
+    return math.ceil(score * 10.0) / 10.0
+
+
+def score_to_severity(score):
+    try:
+        val = float(score)
+    except (TypeError, ValueError):
+        return None
+
+    if val >= 9.0:
+        return "CRITICAL"
+    elif val >= 7.0:
+        return "HIGH"
+    elif val >= 4.0:
+        return "MEDIUM"
+    elif val > 0.0:
+        return "LOW"
+    elif val == 0.0:
+        return "LOW"
+    return None
+
+
 def vuln_severity(vulnerability):
     severity = str(
         (vulnerability.get("database_specific") or {}).get("severity", "")
     ).upper()
 
-    return {
+    mapped = {
         "CRITICAL": "CRITICAL",
         "HIGH": "HIGH",
         "MODERATE": "MEDIUM",
         "MEDIUM": "MEDIUM",
         "LOW": "LOW",
-    }.get(severity, "UNKNOWN")
+    }.get(severity)
+
+    if mapped:
+        return mapped
+
+    severities = vulnerability.get("severity") or []
+    if isinstance(severities, dict):
+        severities = [severities]
+
+    for item in severities:
+        if not isinstance(item, dict):
+            continue
+        raw_score = item.get("score")
+        if raw_score is None:
+            continue
+
+        sev = score_to_severity(raw_score)
+        if sev:
+            return sev
+
+        if isinstance(raw_score, str) and ("CVSS:" in raw_score or "AV:" in raw_score):
+            try:
+                calc_score = cvss_score_from_vector(raw_score)
+                sev = score_to_severity(calc_score)
+                if sev:
+                    return sev
+            except Exception:
+                pass
+
+    return "UNKNOWN"
 
 
 def fixed_versions(vulnerability):

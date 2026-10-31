@@ -1,6 +1,7 @@
 import json
 import tempfile
 import time
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,17 +15,48 @@ from .syft_runner import ECOSYSTEMS, SyftError, parse_cyclonedx, run_syft
 
 
 ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
+MANIFEST_HINTS = {
+    "npm": ["package.json", "package-lock.json", "yarn.lock"],
+    "pypi": ["requirements.txt", "Pipfile.lock", "poetry.lock"],
+    "golang": ["go.mod", "go.sum"],
+    "cargo": ["Cargo.toml", "Cargo.lock"],
+    "maven": ["pom.xml"],
+}
+
+
+def _find_data_file(filename):
+    env_dir = os.environ.get("BUILDGUARD_DATA_DIR") or os.environ.get("SHIELDOPS_DATA_DIR")
+    if env_dir:
+        cand = Path(env_dir) / filename
+        if cand.is_file():
+            return cand
+
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        cand = parent / "data" / filename
+        if cand.is_file():
+            return cand
+
+    cand = Path.cwd() / "data" / filename
+    if cand.is_file():
+        return cand
+
+    cand = current.parent / "data" / filename
+    if cand.is_file():
+        return cand
+
+    return None
 
 
 def _top(filename):
-    path = Path(__file__).resolve().parents[2] / "data" / filename
-    if not path.exists():
-        return set()
+    path = _find_data_file(filename)
+    if not path or not path.is_file():
+        return None
 
     try:
         return set(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError):
-        return set()
+        return None
 
 
 def run(project_path, options=None):
@@ -133,14 +165,27 @@ def _run(project_path, options):
     def add(category, severity, confidence, pkg, title, evidence):
         counter[0] += 1
         base = Path(pkg.manifest).parent if pkg.manifest else root
-        hint_file = base / (
-            "package.json" if pkg.eco == "npm" else "requirements.txt"
-        )
+        hint_file = None
+        for candidate_name in MANIFEST_HINTS.get(pkg.eco, []):
+            cand = base / candidate_name
+            if cand.is_file():
+                hint_file = cand
+                break
 
-        exists = hint_file.is_file()
+        if not hint_file:
+            if pkg.manifest and Path(pkg.manifest).is_file():
+                hint_file = Path(pkg.manifest)
+            else:
+                fallback = base / (
+                    "package.json" if pkg.eco == "npm" else "requirements.txt"
+                )
+                if fallback.is_file():
+                    hint_file = fallback
+
+        exists = hint_file is not None and hint_file.is_file()
         try:
             file_hint = str(hint_file.relative_to(root)) if exists else None
-        except ValueError:
+        except (ValueError, AttributeError):
             file_hint = None
 
         findings.append(Finding(
@@ -274,13 +319,17 @@ def _run(project_path, options):
             )
 
     # 5. Heuristic rules.
-    top = (
-        _top("top_packages_npm.json")
-        | _top("top_packages_pypi.json")
-    )
+    npm_top = _top("top_packages_npm.json")
+    pypi_top = _top("top_packages_pypi.json")
+    if npm_top is None or pypi_top is None:
+        errors.append({
+            "code": "DATA_MISSING",
+            "message": "Top packages data file not found",
+        })
+    top = (npm_top or set()) | (pypi_top or set())
     budget = options.get("max_registry_lookups", 100)
 
-    for pkg in resolved:
+    for pkg in packages.values():
         hits = []
 
         typo = H.typosquat(pkg.name, top) if top else None
@@ -381,13 +430,18 @@ def _run(project_path, options):
     checks.append("heuristics")
 
     # 6. Only claim no known issues when the full required checks completed.
+    has_unresolved = any(
+        finding.category == "UNRESOLVED" for finding in findings
+    )
     real_findings = [
         finding for finding in findings
         if finding.category != "UNRESOLVED"
     ]
 
     if (
-        not real_findings
+        len(resolved) > 0
+        and not has_unresolved
+        and not real_findings
         and "osv_lookup" in checks
         and "syft_sbom" in checks
     ):
