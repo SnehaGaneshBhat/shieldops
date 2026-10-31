@@ -30,10 +30,16 @@ def parse_purl(purl):
     if not typ or not rest:
         return None
 
-    if "@" in rest:
-        name, _, version = rest.rpartition("@")
+    if rest.startswith("@"):
+        if rest.count("@") >= 2:
+            name, _, version = rest.rpartition("@")
+        else:
+            name, version = rest, ""
     else:
-        name, version = rest, ""
+        if "@" in rest:
+            name, _, version = rest.rpartition("@")
+        else:
+            name, version = rest, ""
 
     name = unquote(name)
     version = unquote(version)
