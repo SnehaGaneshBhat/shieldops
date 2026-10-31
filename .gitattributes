@@ -1,0 +1,2 @@
+*.sh text eol=lf
+simulated-compromised-clang text eol=lf
