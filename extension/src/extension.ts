@@ -61,9 +61,29 @@ export function activate(context: vscode.ExtensionContext) {
     try { const html = renderStandaloneReport(lastReport); const base = lastRoot ?? vscode.workspace.workspaceFolders?.[0]?.uri; const uri = await vscode.window.showSaveDialog({ defaultUri: base ? vscode.Uri.joinPath(base, 'buildguard-report.html') : undefined, filters: { HTML: ['html'] } }); if (!uri) return; await vscode.workspace.fs.writeFile(uri, Buffer.from(html, 'utf8')); void vscode.window.showInformationMessage(`Report saved to ${uri.fsPath}`); }
     catch (e) { void vscode.window.showErrorMessage(`BuildGuard export failed: ${(e as Error).message}`); }
   }
+  async function showDemoReport() {
+    try {
+      const fixtureUri = vscode.Uri.joinPath(context.extensionUri, 'media', 'demo-report.json');
+      const bytes = await vscode.workspace.fs.readFile(fixtureUri);
+      const report = JSON.parse(Buffer.from(bytes).toString('utf8')) as Report;
+      if (!report || !Array.isArray(report.items) || typeof report.overall_summary !== 'string') {
+        throw new Error('The bundled demo report is invalid.');
+      }
+      report.scan_id = `DEMO-${Date.now()}`;
+      report.generated_at = new Date().toISOString();
+      lastReport = report;
+      lastRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+      status.text = '$(beaker) BuildGuard: demo';
+      showReport(report);
+      void vscode.window.showInformationMessage('BuildGuard demo report opened. This is fictional data; no workspace files were scanned.');
+    } catch (e) {
+      void vscode.window.showErrorMessage(`BuildGuard demo could not be opened: ${(e as Error).message}`);
+    }
+  }
   context.subscriptions.push(out, backend, diagnostics, status,
     vscode.commands.registerCommand('buildguard.scan', runScan),
     vscode.commands.registerCommand('buildguard.showReport', () => lastReport ? showReport(lastReport) : vscode.window.showInformationMessage('No report yet. Run BuildGuard: Scan Workspace.')),
+    vscode.commands.registerCommand('buildguard.showDemoReport', showDemoReport),
     vscode.commands.registerCommand('buildguard.exportHtml', exportHtml),
     vscode.commands.registerCommand('buildguard.clearDiagnostics', () => diagnostics.clear()));
 }

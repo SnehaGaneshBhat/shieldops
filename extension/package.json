@@ -8,11 +8,12 @@
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Linters", "Other"],
   "main": "./dist/extension.js",
-  "files": ["dist/**", "README.md", "package.json"],
+  "files": ["dist/**", "media/demo-report.json", "README.md", "package.json"],
   "contributes": {
     "commands": [
       { "command": "buildguard.scan", "title": "BuildGuard: Scan Workspace" },
       { "command": "buildguard.showReport", "title": "BuildGuard: Show Last Report" },
+      { "command": "buildguard.showDemoReport", "title": "BuildGuard: Show Demo Report (No Backend)" },
       { "command": "buildguard.exportHtml", "title": "BuildGuard: Export Report as HTML" },
       { "command": "buildguard.clearDiagnostics", "title": "BuildGuard: Clear Problems" }
     ],
@@ -31,6 +32,7 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "lint": "tsc --noEmit",
+    "test:demo": "node --test test/demo-report.test.cjs",
     "mock": "node test/mock-server.cjs",
     "package": "vsce package --no-dependencies --allow-missing-repository --skip-license -o ../buildguard-0.1.0.vsix"
   },

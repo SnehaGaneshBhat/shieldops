@@ -44,3 +44,8 @@ def main(argv=None):
         print(output)
 
     return 1 if result.status == "error" else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
