@@ -1,0 +1,7 @@
+{
+  "name": "cache-ignored",
+  "version": "1.0.0",
+  "dependencies": {
+    "cache-ignored-pkg": "1.0.0"
+  }
+}

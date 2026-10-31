@@ -11,6 +11,15 @@ def test_scoped():
     assert parse_purl("pkg:npm/%40babel/core@7.0.0") == (
         "npm", "@babel/core", "7.0.0"
     )
+    assert parse_purl("pkg:npm/@babel/core@7.0.0") == (
+        "npm", "@babel/core", "7.0.0"
+    )
+
+
+def test_scoped_unversioned():
+    assert parse_purl("pkg:npm/@babel/core") == ("npm", "@babel/core", None)
+    assert parse_purl("pkg:npm/%40babel/core") == ("npm", "@babel/core", None)
+    assert parse_purl("pkg:npm/@types/node") == ("npm", "@types/node", None)
 
 
 def test_no_version():
@@ -25,3 +34,13 @@ def test_maven():
 
 def test_garbage():
     assert parse_purl("nonsense") is None
+
+
+def test_vcpkg():
+    assert parse_purl("pkg:vcpkg/curl@7.80.0") == ("vcpkg", "curl", "7.80.0")
+    assert parse_purl("pkg:vcpkg/curl") == ("vcpkg", "curl", None)
+
+
+def test_conan():
+    assert parse_purl("pkg:conan/libcurl@7.80.0") == ("conan", "libcurl", "7.80.0")
+    assert parse_purl("pkg:conan/libcurl") == ("conan", "libcurl", None)

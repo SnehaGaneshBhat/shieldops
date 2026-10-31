@@ -13,7 +13,18 @@ __pycache__/
 
 # Generated SBOM files
 *.sbom
+
 # BuildGuard runtime data
 .buildguard/
+
+# Node.js dependencies
 node_modules/
+
+# Generated reports
+reports/
+
+# Ignore generated distribution folders in test samples
 test_samples/*/dist/
+
+# Compiled demo binaries
+test_samples/deps_vuln_cpp/main

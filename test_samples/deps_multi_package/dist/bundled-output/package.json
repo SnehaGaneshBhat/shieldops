@@ -1,0 +1,7 @@
+{
+  "name": "dist-output",
+  "version": "1.0.0",
+  "dependencies": {
+    "dist-ignored-pkg": "1.0.0"
+  }
+}

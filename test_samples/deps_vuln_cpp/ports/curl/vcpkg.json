@@ -1,0 +1,5 @@
+{
+  "name": "curl",
+  "version": "7.80.0",
+  "description": "A command line tool and library for transferring data with URLs"
+}

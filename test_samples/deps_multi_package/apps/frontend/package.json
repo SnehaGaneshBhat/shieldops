@@ -1,0 +1,10 @@
+{
+  "name": "frontend-service",
+  "version": "2.0.0",
+  "dependencies": {
+    "debug": "4.3.4"
+  },
+  "optionalDependencies": {
+    "fsevents": "2.3.2"
+  }
+}
