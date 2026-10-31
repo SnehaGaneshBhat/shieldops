@@ -1,52 +1,19 @@
-import * as vscode from 'vscode';
-import * as crypto from 'crypto';
-import type { Category, Report, ReportItem } from './types';
-const META: Record<Category, { label: string; tone: string }> = {
-  KNOWN_MALICIOUS_ADVISORY: { label: 'Malicious advisory', tone: 'critical' },
-  KNOWN_VULNERABILITY: { label: 'Known vulnerability', tone: 'high' },
-  BUILD_MISMATCH: { label: 'Build mismatch', tone: 'high' },
-  COMPILER_ANOMALY: { label: 'Compiler anomaly', tone: 'violet' },
-  SUSPICIOUS_INDICATOR: { label: 'Suspicious indicator', tone: 'amber' },
-  UNRESOLVED: { label: 'Unresolved check', tone: 'slate' },
-  NO_KNOWN_ISSUES: { label: 'No known issues detected', tone: 'green' }
-};
-const ORDER = Object.keys(META) as Category[];
-const esc = (v: unknown) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-let panel: vscode.WebviewPanel | undefined;
-export function showReport(report: Report) {
-  if (!panel) {
-    panel = vscode.window.createWebviewPanel('buildguardReport', 'BuildGuard · Scan report', vscode.ViewColumn.Beside, { enableScripts: true });
-    panel.onDidDispose(() => { panel = undefined; });
-    panel.webview.onDidReceiveMessage((m) => { if (m?.type === 'export') vscode.commands.executeCommand('buildguard.exportHtml'); });
-  }
-  panel.webview.html = render(report, false);
-  panel.reveal(vscode.ViewColumn.Beside, true);
-}
-export function renderStandaloneReport(report: Report) { return render(report, true); }
-function evidenceList(it: ReportItem) { return Array.isArray(it.evidence) ? it.evidence.filter((e) => Boolean(e) && typeof e === 'object') : []; }
-function isSimulation(it: ReportItem) { return evidenceList(it).some((e) => e.data?.simulation === true); }
-function card(it: ReportItem) {
-  const ex = it.explanation && typeof it.explanation === 'object' && !Array.isArray(it.explanation) ? it.explanation : {};
-  const evidence = evidenceList(it).map((e) => ({ type: e.type, rule_id: e.rule_id, data: e.data, untrusted_text: e.untrusted_text }));
-  const actions = (Array.isArray(ex.recommended_actions) ? ex.recommended_actions : []).map((a) => `<li>${esc(a)}</li>`).join('');
-  const source = it.explanation_source === 'llm' ? 'AI explanation · checked against findings' : 'Template explanation';
-  return `<article class="finding"><div class="finding-top"><span class="eyebrow">${esc(it.module)} / ${esc(it.id)}</span><span class="pill sev-${esc(String(it.severity).toLowerCase())}">${esc(it.severity)}</span>${isSimulation(it) ? '<span class="pill sim">SIMULATION</span>' : ''}</div><h3>${esc(it.title)}</h3><p class="facts">${esc(it.confidence)} confidence${it.subject?.name ? ` · ${esc(it.subject.name)}` : ''}${it.subject?.version ? ` ${esc(it.subject.version)}` : ''}</p>${ex.plain_explanation ? `<p>${esc(ex.plain_explanation)}</p>` : ''}${ex.why_it_matters ? `<p class="why"><strong>Why it matters</strong> ${esc(ex.why_it_matters)}</p>` : ''}${actions ? `<div class="action"><strong>Suggested next step</strong><ul>${actions}</ul></div>` : ''}${ex.limitations ? `<p class="limit">${esc(ex.limitations)}</p>` : ''}<p class="source">${esc(source)}</p><details><summary>Inspect evidence</summary><pre>${esc(JSON.stringify({ subject: it.subject, evidence }, null, 2))}</pre></details></article>`;
-}
-function render(report: Report, standalone: boolean): string {
-  const nonce = crypto.randomBytes(16).toString('hex');
-  const items = report.items ?? [];
-  const groups = new Map<string, ReportItem[]>();
-  for (const it of items) groups.set(it.category, [...(groups.get(it.category) ?? []), it]);
-  const cats = [...ORDER.filter((c) => groups.has(c)), ...[...groups.keys()].filter((c) => !(c in META)) as Category[]];
-  const sections = cats.map((c) => `<section class="category ${META[c]?.tone ?? 'slate'}"><div class="category-head"><span>${esc(META[c]?.label ?? c)}</span><span class="count">${(groups.get(c) ?? []).length}</span></div>${(groups.get(c) ?? []).map(card).join('')}</section>`).join('');
-  const status = Object.entries(report.module_status ?? {}).map(([k,v]) => `<div class="module"><span>${esc(k)}</span><b>${esc(typeof v === 'string' ? v : JSON.stringify(v))}</b></div>`).join('');
-  const limits = (Array.isArray(report.limitations) ? report.limitations : []).map((l) => `<li>${esc(l)}</li>`).join('');
-  const issueCount = items.filter((i) => i.category !== 'NO_KNOWN_ISSUES').length;
-  const theme = standalone ? ':root{color-scheme:dark;--vscode-foreground:#e2e8ed;--vscode-editor-background:#101d2c;--vscode-panel-border:#33485c;--vscode-button-background:#73d7c2;--vscode-button-foreground:#101d2c;--vscode-editorWidget-background:#13253a;--vscode-textCodeBlock-background:#0b1724;--vscode-button-border:#40576b}' : ':root{color-scheme:light dark}';
-  const csp = standalone ? `default-src 'none'; style-src 'nonce-${nonce}';` : `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';`;
-  const exportButton = standalone ? '' : '<div class="actions"><button id="export">Export report</button></div>';
-  const script = standalone ? '' : `<script nonce="${nonce}">const vscode=acquireVsCodeApi();document.getElementById('export').addEventListener('click',()=>vscode.postMessage({type:'export'}));</script>`;
-  return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="viewport" content="width=device-width, initial-scale=1"><style nonce="${nonce}">
-  ${theme}*{box-sizing:border-box}body{margin:0;padding:28px 34px 48px;color:var(--vscode-foreground);font-family:var(--vscode-font-family,Arial,sans-serif);background:var(--vscode-editor-background);line-height:1.55;max-width:1120px}.mast{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--vscode-panel-border);padding-bottom:20px}.brand{display:flex;gap:14px;align-items:center}.mark{width:40px;height:40px;border-radius:13px;background:linear-gradient(145deg,#5ed6c2,#54a6ff);color:#071820;display:grid;place-items:center;font-size:22px;font-weight:800}.kicker,.eyebrow,.source,.facts,.muted{font-size:11px;letter-spacing:.08em;text-transform:uppercase;opacity:.68}.kicker{margin:0 0 2px}.mast h1{font-size:23px;letter-spacing:-.03em;margin:0}.actions button{border:1px solid var(--vscode-button-border,var(--vscode-panel-border));background:var(--vscode-button-background);color:var(--vscode-button-foreground);border-radius:8px;padding:8px 13px;cursor:pointer;font:inherit}.hero{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:center;padding:28px 0 20px}.hero h2{margin:0 0 5px;font-size:21px;letter-spacing:-.025em}.hero p{margin:0;opacity:.78;max-width:700px}.metric{border:1px solid var(--vscode-panel-border);border-radius:14px;padding:12px 18px;min-width:116px;text-align:center;background:color-mix(in srgb,var(--vscode-editorWidget-background) 88%,transparent)}.metric strong{display:block;font-size:28px;line-height:1.2}.metric span{font-size:10px;letter-spacing:.1em;text-transform:uppercase;opacity:.68}.meta{font-size:11px;opacity:.58;margin-top:9px}.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin:14px 0 30px}.module{border:1px solid var(--vscode-panel-border);border-radius:10px;padding:10px 13px;display:flex;justify-content:space-between;gap:10px;font-size:12px}.module b{font-weight:600;opacity:.82}.category{margin:26px 0 34px;padding-left:14px;border-left:2px solid #8492a6}.category.critical,.category.high{border-color:#e76c62}.category.violet{border-color:#bd8be9}.category.amber{border-color:#e2b35b}.category.green{border-color:#62ba92}.category-head{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:700;letter-spacing:.015em;margin:0 0 13px}.count{font-size:11px;opacity:.65;border:1px solid var(--vscode-panel-border);border-radius:20px;padding:0px 7px}.finding{border:1px solid var(--vscode-panel-border);border-radius:12px;padding:16px 18px;margin:10px 0;background:color-mix(in srgb,var(--vscode-editorWidget-background) 82%,transparent);box-shadow:0 5px 18px #0000000a}.finding-top{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.eyebrow{margin-right:auto}.pill{border-radius:20px;padding:2px 9px;font-size:10px;font-weight:700;letter-spacing:.06em;background:#6b778522}.sev-critical,.sev-high{background:#ef776322;color:#f29189}.sev-medium{background:#e7ad3a22;color:#e7be70}.sev-low,.sev-info{background:#5ca5da22;color:#80bbe5}.sim{background:#71809633;color:#a9bad2}.finding h3{margin:7px 0 2px;font-size:16px;letter-spacing:-.012em}.facts,.source{font-size:10px;letter-spacing:.04em;margin:0 0 11px}.finding p{margin:9px 0}.why,.action{padding:10px 12px;border-radius:7px;background:color-mix(in srgb,var(--vscode-editor-background) 76%,transparent)}.action ul{margin:4px 0 0;padding-left:20px}.limit{font-size:12px;opacity:.72}.source{margin:12px 0 7px}details{border-top:1px solid var(--vscode-panel-border);padding-top:9px}summary{cursor:pointer;font-size:12px;opacity:.8}pre{overflow:auto;padding:12px;border-radius:8px;background:var(--vscode-textCodeBlock-background);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}.empty{padding:22px;border:1px dashed var(--vscode-panel-border);border-radius:12px;opacity:.72}.limits{margin-top:34px;padding-top:20px;border-top:1px solid var(--vscode-panel-border)}.limits h2{font-size:15px}.limits li{font-size:12px;opacity:.8;margin:6px 0}@media(max-width:620px){body{padding:20px 16px}.hero{grid-template-columns:1fr}.metric{justify-self:start}.mast{align-items:flex-start;gap:12px}}
-  </style></head><body><header class="mast"><div class="brand"><div class="mark">B</div><div><p class="kicker">BuildGuard / Analysis</p><h1>Workspace report</h1></div></div>${exportButton}</header><main><div class="hero"><div><h2>${issueCount ? `${issueCount} finding${issueCount === 1 ? '' : 's'} to review` : 'Checks complete'}</h2><p>${esc(report.overall_summary)}</p><div class="meta">Scan ${esc(report.scan_id)} &nbsp;·&nbsp; ${esc(report.generated_at)}</div></div><div class="metric"><strong>${issueCount}</strong><span>Needs review</span></div></div><h2 class="kicker">Module status</h2><div class="overview">${status || '<div class="module">No module status provided</div>'}</div>${sections || '<div class="empty">No findings were returned. Review the module status and limitations below to understand which checks ran.</div>'}<div class="limits"><h2>Limits of this report</h2><ul>${limits || '<li>Results cover only the checks that completed and the evidence they produced.</li>'}</ul></div></main>${script}</body></html>`;
-}
+const nested =
+  it.explanation && typeof it.explanation === 'object' && !Array.isArray(it.explanation)
+    ? it.explanation
+    : {};
+
+const plainExplanation = nested.plain_explanation ?? it.plain_explanation;
+const whyItMatters = nested.why_it_matters ?? it.why_it_matters;
+const recommendedActions = nested.recommended_actions ?? it.recommended_actions;
+const itemLimitations = nested.limitations ?? it.limitations;
+
+const actions = Array.isArray(recommendedActions)
+  ? recommendedActions.map((action) => `<li>${esc(action)}</li>`).join('')
+  : '';
+
+const sourceType = it.explanation_source ?? reportSource;
+const source =
+  sourceType === 'llm' || sourceType === 'llm_validated'
+    ? 'AI explanation · checked against findings'
+    : 'Template explanation';
