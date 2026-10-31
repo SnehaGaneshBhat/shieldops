@@ -132,7 +132,13 @@ def test_scan_dependencies_returns_findings(tmp_path):
     assert isinstance(result, list)
 
 
-def test_sample_deps_vuln_cpp_regression():
+def test_sample_deps_vuln_cpp_regression(monkeypatch):
+    from modules.dependency_scanner.osv_client import OSVClient
+
+    def mock_query_ids(self, packages):
+        return {package: [] for package in packages}, []
+
+    monkeypatch.setattr(OSVClient, "query_ids", mock_query_ids)
     from pathlib import Path
     cpp_sample = Path(__file__).resolve().parents[3] / "test_samples" / "deps_vuln_cpp"
     result = run(cpp_sample, {"offline": True})
@@ -148,7 +154,13 @@ def test_sample_deps_vuln_cpp_regression():
     assert "syft_sbom" in result.checks_performed
 
 
-def test_sample_deps_vuln_cpp_verbose_and_sbom_output(tmp_path, capsys):
+def test_sample_deps_vuln_cpp_verbose_and_sbom_output(tmp_path, capsys, monkeypatch):
+    from modules.dependency_scanner.osv_client import OSVClient
+
+    def mock_query_ids(self, packages):
+        return {package: [] for package in packages}, []
+
+    monkeypatch.setattr(OSVClient, "query_ids", mock_query_ids)
     from pathlib import Path
     cpp_sample = Path(__file__).resolve().parents[3] / "test_samples" / "deps_vuln_cpp"
     sbom_file = tmp_path / "test.sbom.json"
@@ -279,7 +291,13 @@ def test_scanner_malformed_package_json(tmp_path):
     assert "package.json" in errs[0]["file"]
 
 
-def test_simplified_c_program_curl():
+def test_simplified_c_program_curl(monkeypatch):
+    from modules.dependency_scanner.osv_client import OSVClient
+
+    def mock_query_ids(self, packages):
+        return {package: [] for package in packages}, []
+
+    monkeypatch.setattr(OSVClient, "query_ids", mock_query_ids)
     from pathlib import Path
     cpp_dir = Path(__file__).resolve().parents[3] / "test_samples" / "deps_vuln_cpp"
     main_c = cpp_dir / "main.c"

@@ -233,7 +233,7 @@ def _build_report(scan_id, findings, results, use_llm):
     notes = [
         f'{m} check did not complete: {e.get("code")}: {e.get("message")}'
         for m, r in results.items()
-        if r.status in ('error', 'skipped')
+        if r.status in ('error', 'skipped', 'partial')
         for e in r.errors
     ]
 
@@ -340,6 +340,27 @@ def _run_scan(scan_id, project_path, modules, options):
         t.join()
 
     if scan_id in _CANCELLED:
+        try:
+            findings = _correlate(results)
+            store.write_json(
+                scan_id,
+                'findings.json',
+                {
+                    'scan_id': scan_id,
+                    'findings': [_dump(f) for f in findings]
+                }
+            )
+            report = _build_report(
+                scan_id,
+                findings,
+                results,
+                bool(options.get('use_llm'))
+            )
+            report['overall_summary'] = f'Scan was cancelled. {len(findings)} partial finding(s) collected.'
+            store.write_json(scan_id, 'report.json', report)
+            store.write_text(scan_id, 'report.html', _render_html(report))
+        except Exception:
+            pass
         return
 
     try:

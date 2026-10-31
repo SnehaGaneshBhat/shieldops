@@ -123,9 +123,17 @@ def run(project_path, options=None):
 
     result.duration_ms = int((time.time() - started) * 1000)
     if opts.get("out_path"):
-        out_p = Path(opts["out_path"])
-        out_p.parent.mkdir(parents=True, exist_ok=True)
-        out_p.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        try:
+            out_p = Path(opts["out_path"])
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            out_p.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        except OSError as exc:
+            result.errors.append({
+                "code": "REPORT_WRITE_ERROR",
+                "message": f"Failed to write report to {opts['out_path']}: {exc}",
+            })
+            if result.status == "ok":
+                result.status = "partial"
     if opts.get("verbose"):
         _print_summary(result, project_path)
     return result
@@ -155,6 +163,10 @@ def _run(project_path, options):
     versions = {}
     packages = {}
 
+    def cancelled():
+        cb = options.get("cancel_check")
+        return bool(cb and cb())
+
     if verbose:
         print("=" * 50)
         print("             BUILDGUARD DEPENDENCY SCANNER")
@@ -163,6 +175,14 @@ def _run(project_path, options):
 
     manifests = discover(root)
     checks.append("manifest_discovery")
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
 
     # Dependency installation
     install_opt = options.get("install")
@@ -230,9 +250,19 @@ def _run(project_path, options):
         name = norm_pypi(pkg.name) if pkg.eco == "pypi" else pkg.name
         return pkg.eco, name, pkg.version
 
-    # Determine inspectable SBOM output path if requested or for C/C++ demo
-    sbom_out = options.get("sbom_path")
-    if not sbom_out and (
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
+
+    # Determine inspectable SBOM output path if requested, for scan_dir, or for C/C++ demo
+    sbom_out = options.get("sbom_path") or options.get("sbom_out")
+    if not sbom_out and options.get("scan_dir"):
+        sbom_out = str(Path(options["scan_dir"]) / "sbom.json")
+    elif not sbom_out and (
         (root / "vcpkg.json").is_file()
         or (root / "conanfile.txt").is_file()
         or root.name == "deps_vuln_cpp"
@@ -250,12 +280,31 @@ def _run(project_path, options):
             run_syft(str(root), sbom_temp)
             components, versions["syft"] = parse_cyclonedx(sbom_temp)
             if sbom_out:
-                out_sbom_file = Path(sbom_out)
-                out_sbom_file.parent.mkdir(parents=True, exist_ok=True)
-                out_sbom_file.write_text(
-                    Path(sbom_temp).read_text(encoding="utf-8"),
-                    encoding="utf-8",
-                )
+                try:
+                    out_sbom_file = Path(sbom_out)
+                    out_sbom_file.parent.mkdir(parents=True, exist_ok=True)
+                    out_sbom_file.write_text(
+                        Path(sbom_temp).read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+                except OSError as exc:
+                    errors.append({
+                        "code": "SBOM_WRITE_ERROR",
+                        "message": f"Failed to write SBOM to {sbom_out}: {exc}",
+                    })
+
+            scan_dir = options.get("scan_dir")
+            if scan_dir:
+                scan_dir_sbom = Path(scan_dir) / "sbom.json"
+                try:
+                    if not sbom_out or Path(sbom_out).resolve() != scan_dir_sbom.resolve():
+                        scan_dir_sbom.parent.mkdir(parents=True, exist_ok=True)
+                        scan_dir_sbom.write_text(
+                            Path(sbom_temp).read_text(encoding="utf-8"),
+                            encoding="utf-8",
+                        )
+                except OSError:
+                    pass
 
         if verbose:
             print(f"      Syft version: {versions.get('syft', '1.55.0')}")
@@ -447,6 +496,15 @@ def _run(project_path, options):
         (ECOSYSTEMS[pkg.eco], pkg.name, pkg.version)
         for pkg in osv_eligible
     ]
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
+
     ids_by_package, failed = osv.query_ids(osv_packages)
 
     query_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -531,6 +589,14 @@ def _run(project_path, options):
                 f"{pkg.name} {pkg.version}: {len(group)} OSV advisory record(s)",
                 evidence,
             )
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
 
     # 5. Heuristic rules.
     npm_top = _top("top_packages_npm.json")
