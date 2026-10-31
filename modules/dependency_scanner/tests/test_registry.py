@@ -85,4 +85,3 @@ def test_fetch_age_failure():
     pkg = Pkg("npm", "missing-pkg", "1.0.0", source="registry")
     info = fetch_age(pkg, http=client)
     assert info == {}
-

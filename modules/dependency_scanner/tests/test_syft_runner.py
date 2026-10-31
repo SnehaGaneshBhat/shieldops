@@ -87,3 +87,32 @@ def test_parse_cyclonedx_valid(tmp_path):
     assert ("npm", "lodash", "4.17.20") in components
     assert (None, "custom-lib", "2.0.0") in components
 
+
+def test_parse_cyclonedx_cpp(tmp_path):
+    sbom = tmp_path / "sbom_cpp.json"
+    sbom.write_text(json.dumps({
+        "metadata": {
+            "tools": {
+                "components": [{"name": "syft", "version": "1.55.0"}]
+            }
+        },
+        "components": [
+            {
+                "type": "library",
+                "name": "curl",
+                "version": "7.80.0",
+                "purl": "pkg:vcpkg/curl@7.80.0",
+            },
+            {
+                "type": "library",
+                "name": "libcurl",
+                "version": "7.80.0",
+                "purl": "pkg:conan/libcurl@7.80.0",
+            }
+        ]
+    }), encoding="utf-8")
+
+    components, version = parse_cyclonedx(sbom)
+    assert version == "1.55.0"
+    assert ("vcpkg", "curl", "7.80.0") in components
+    assert ("conan", "libcurl", "7.80.0") in components

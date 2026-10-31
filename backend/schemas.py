@@ -55,6 +55,9 @@ class Report(BaseModel):
 # ---- API request models ----
 
 class ScanOptions(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    # P2 build-integrity & orchestrator options
     use_llm: bool = True
     recipe_path: str = 'buildguard.yml'
     manifest_path: Optional[str] = None
@@ -63,6 +66,15 @@ class ScanOptions(BaseModel):
     run_sandbox: bool = False
     allow_unpinned: bool = False  # dev only: build with an image tag, not a digest
     docker_timeout: int = 120
+
+    # P1 dependency scanner options
+    offline: bool = False
+    install: Optional[bool] = None
+    auto_install: bool = False
+    sbom_path: Optional[str] = None
+    sbom_out: Optional[str] = None
+    verbose: bool = False
+    max_registry_lookups: int = 100
 
 
 class ScanRequest(BaseModel):

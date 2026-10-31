@@ -3,6 +3,7 @@ import json
 from modules.dependency_scanner.lockfiles import (
     norm_pypi,
     parse_npm_lock,
+    parse_package_json,
     parse_requirements,
 )
 
@@ -185,3 +186,83 @@ def test_parse_requirements_direct_url_and_git(tmp_path):
     assert "my-pkg" in by_name
     assert by_name["my-pkg"].source == "url"
     assert by_name["my-pkg"].version == "1.2.3"
+
+
+def test_parse_package_json_all_sections(tmp_path):
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text(json.dumps({
+        "name": "test-app",
+        "version": "1.0.0",
+        "dependencies": {
+            "express": "^4.18.2",
+            "lodash": "4.17.20"
+        },
+        "devDependencies": {
+            "mocha": "~10.2.0"
+        },
+        "optionalDependencies": {
+            "fsevents": "^2.3.3"
+        },
+        "peerDependencies": {
+            "react": ">=18.0.0"
+        }
+    }), encoding="utf-8")
+
+    pkgs = parse_package_json(pkg_json)
+    by_name = {p.name: p for p in pkgs}
+
+    assert len(pkgs) == 5
+    assert by_name["express"].version == "4.18.2"
+    assert by_name["express"].manifest == str(pkg_json)
+    assert by_name["lodash"].version == "4.17.20"
+    assert by_name["mocha"].version == "10.2.0"
+    assert by_name["fsevents"].version == "2.3.3"
+    assert by_name["react"].version == "18.0.0"
+
+
+def test_parse_package_json_duplicates(tmp_path):
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text(json.dumps({
+        "dependencies": {
+            "lodash": "4.17.20"
+        },
+        "devDependencies": {
+            "lodash": "4.17.21"
+        }
+    }), encoding="utf-8")
+
+    pkgs = parse_package_json(pkg_json)
+    assert len(pkgs) == 1
+    assert pkgs[0].name == "lodash"
+    assert pkgs[0].version == "4.17.20"
+
+
+def test_parse_package_json_sources(tmp_path):
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text(json.dumps({
+        "dependencies": {
+            "local-lib": "file:../local-lib",
+            "git-lib": "git+https://github.com/example/git-lib.git#v1.2.3",
+            "url-lib": "https://example.com/tarballs/url-lib.tgz",
+            "unpinned": "*"
+        }
+    }), encoding="utf-8")
+
+    pkgs = parse_package_json(pkg_json)
+    by_name = {p.name: p for p in pkgs}
+
+    assert by_name["local-lib"].source == "local"
+    assert by_name["local-lib"].local_dir == "../local-lib"
+    assert by_name["git-lib"].source == "git"
+    assert by_name["git-lib"].version == "1.2.3"
+    assert by_name["url-lib"].source == "url"
+    assert by_name["unpinned"].version is None
+
+
+def test_parse_package_json_malformed(tmp_path):
+    pkg_json = tmp_path / "package.json"
+    pkg_json.write_text("{ this is not valid json", encoding="utf-8")
+
+    import pytest
+    with pytest.raises(ValueError, match="Malformed package.json"):
+        parse_package_json(pkg_json)

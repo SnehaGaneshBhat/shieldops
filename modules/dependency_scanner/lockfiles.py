@@ -58,7 +58,6 @@ def _parse_npm_v1(dependencies, lock_path, out=None):
 
     return out
 
-
 def parse_npm_lock(lock):
     data = json.loads(Path(lock).read_text(encoding="utf-8"))
     out = []
@@ -113,7 +112,6 @@ def parse_npm_lock(lock):
         out = _parse_npm_v1(data["dependencies"], lock)
 
     return out
-
 
 def norm_pypi(name):
     return re.sub(r"[-_.]+", "-", name).lower()
@@ -224,6 +222,88 @@ def parse_requirements(path):
                     source,
                     resolved=resolved,
                     manifest=str(path),
+                )
+            )
+
+    return out
+
+
+def parse_package_json(path):
+    """Extract dependencies from a package.json manifest."""
+    path_obj = Path(path)
+    try:
+        data = json.loads(path_obj.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Malformed package.json in {path}: {exc}")
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid package.json (root is not an object) in {path}")
+
+    out = []
+    seen = set()
+
+    sections = [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+    ]
+
+    for section in sections:
+        deps = data.get(section)
+        if not isinstance(deps, dict):
+            continue
+
+        for name, spec in deps.items():
+            if not name or not isinstance(name, str):
+                continue
+
+            name = name.strip()
+            if name in seen:
+                continue
+            seen.add(name)
+
+            spec_str = str(spec).strip() if spec is not None else ""
+            source = "registry"
+            resolved = None
+            version = None
+            local = None
+
+            if spec_str.startswith("file:"):
+                source = "local"
+                local = spec_str[5:]
+                resolved = spec_str
+            elif spec_str.startswith(("git+", "git://", "github:")) or ".git" in spec_str:
+                source = "git"
+                resolved = spec_str
+                # Attempt to extract version tag/branch if present
+                if "#" in spec_str:
+                    tag = spec_str.split("#")[-1]
+                    tag_clean = re.sub(r"^[~^=v\s]+", "", tag)
+                    if re.match(r"^\d+(\.\d+)*", tag_clean):
+                        version = tag_clean
+            elif spec_str.startswith(("http://", "https://")):
+                source = "url"
+                resolved = spec_str
+            else:
+                clean_ver = re.sub(r"^[~^=v\s<>]+", "", spec_str).split(" ")[0]
+                if clean_ver and re.match(r"^\d+(\.\d+)*", clean_ver):
+                    version = clean_ver
+                elif spec_str and re.match(r"^\d+(\.\d+)*", spec_str):
+                    version = spec_str
+                else:
+                    version = None
+
+            out.append(
+                Pkg(
+                    eco="npm",
+                    name=name,
+                    version=version,
+                    source=source,
+                    resolved=resolved,
+                    integrity=None,
+                    local_dir=local,
+                    manifest=str(path_obj),
                 )
             )
 

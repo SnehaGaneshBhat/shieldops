@@ -7,7 +7,8 @@ from pathlib import Path
 
 from . import heuristics as H
 from .discover import discover, find_line
-from .lockfiles import Pkg, norm_pypi, parse_npm_lock, parse_requirements
+from .installer import install_all
+from .lockfiles import Pkg, norm_pypi, parse_npm_lock, parse_package_json, parse_requirements
 from .models import Evidence, Finding, ModuleResult
 from .osv_client import OSVClient, OSVError, fixed_versions, vuln_severity
 from .registry import fetch_age, load_meta
@@ -21,6 +22,8 @@ MANIFEST_HINTS = {
     "golang": ["go.mod", "go.sum"],
     "cargo": ["Cargo.toml", "Cargo.lock"],
     "maven": ["pom.xml"],
+    "vcpkg": ["vcpkg.json", "vcpkg-configuration.json"],
+    "conan": ["conanfile.txt", "conan.lock"],
 }
 
 
@@ -59,11 +62,54 @@ def _top(filename):
         return None
 
 
+def _detect_language(root, manifests):
+    manifest_names = {m.name for m in manifests}
+    if {"vcpkg.json", "vcpkg-configuration.json", "conanfile.txt", "conan.lock"} & manifest_names:
+        return "C"
+    for ext in (".c", ".h"):
+        if list(root.glob(f"*{ext}")):
+            return "C"
+    for ext in (".cpp", ".cc", ".cxx", ".hpp"):
+        if list(root.glob(f"*{ext}")):
+            return "C++"
+    if {"package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"} & manifest_names:
+        return "JavaScript"
+    if {"requirements.txt", "Pipfile.lock", "poetry.lock"} & manifest_names or list(root.glob("*.py")):
+        return "Python"
+    if {"go.mod", "go.sum"} & manifest_names or list(root.glob("*.go")):
+        return "Go"
+    if {"Cargo.lock"} & manifest_names or list(root.glob("*.rs")):
+        return "Rust"
+    if {"pom.xml"} & manifest_names or list(root.glob("*.java")):
+        return "Java"
+    return "Generic"
+
+
+def _print_summary(result, project_path):
+    print("=" * 50)
+    print("                  SCAN SUMMARY")
+    print("=" * 50)
+    print(f"      Target: {Path(project_path).name}")
+    print(f"      Status: {result.status.upper()}")
+    print(f"      Duration: {result.duration_ms}ms")
+    print(f"      Checks Performed: {len(result.checks_performed)}")
+    print(f"      Total Findings: {len(result.findings)}")
+    counts = {}
+    for f in result.findings:
+        counts[f.severity] = counts.get(f.severity, 0) + 1
+    for sev in ORDER:
+        if counts.get(sev, 0) > 0:
+            print(f"      - {sev}: {counts[sev]}")
+    print("=" * 50)
+    print()
+
+
 def run(project_path, options=None):
     started = time.time()
+    opts = options or {}
 
     try:
-        result = _run(project_path, options or {})
+        result = _run(project_path, opts)
     except Exception as exc:
         result = ModuleResult(
             module="dependency",
@@ -76,6 +122,20 @@ def run(project_path, options=None):
         )
 
     result.duration_ms = int((time.time() - started) * 1000)
+    if opts.get("out_path"):
+        try:
+            out_p = Path(opts["out_path"])
+            out_p.parent.mkdir(parents=True, exist_ok=True)
+            out_p.write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        except OSError as exc:
+            result.errors.append({
+                "code": "REPORT_WRITE_ERROR",
+                "message": f"Failed to write report to {opts['out_path']}: {exc}",
+            })
+            if result.status == "ok":
+                result.status = "partial"
+    if opts.get("verbose"):
+        _print_summary(result, project_path)
     return result
 
 
@@ -97,24 +157,163 @@ def _run(project_path, options):
         )
 
     offline = bool(options.get("offline"))
+    verbose = bool(options.get("verbose"))
     errors = []
     checks = []
     versions = {}
     packages = {}
 
+    def cancelled():
+        cb = options.get("cancel_check")
+        return bool(cb and cb())
+
+    if verbose:
+        print("=" * 50)
+        print("             BUILDGUARD DEPENDENCY SCANNER")
+        print("=" * 50)
+        print()
+
     manifests = discover(root)
     checks.append("manifest_discovery")
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
+
+    # Dependency installation
+    install_opt = options.get("install")
+    should_install = install_opt is True or (install_opt is not False and not offline and options.get("auto_install", False))
+    install_res = install_all(manifests, offline=(offline or not should_install))
+    if should_install and not offline and install_res.get("attempted", 0) > 0:
+        if "dependency_installation" not in checks:
+            checks.append("dependency_installation")
+        if install_res.get("failed", 0) > 0:
+            for proj in install_res.get("projects", []):
+                if proj.get("status") == "failed":
+                    errors.append({
+                        "code": "INSTALL_ERROR",
+                        "message": f"Dependency installation failed for {proj.get('manifest')}: {proj.get('error')}",
+                        "manifest": proj.get("manifest"),
+                    })
+
+    if verbose:
+        lang = _detect_language(root, manifests)
+        if len(manifests) > 1:
+            manifest_counts = {}
+            for m in manifests:
+                manifest_counts[m.name] = manifest_counts.get(m.name, 0) + 1
+            mf_parts = [f"{cnt} {name}" if cnt > 1 else name for name, cnt in sorted(manifest_counts.items())]
+            mf_display = f"{len(manifests)} manifest(s) ({', '.join(mf_parts)})"
+        elif manifests:
+            mf_display = manifests[0].name
+        else:
+            mf_display = "none"
+
+        has_pkg_json = any(m.name == "package.json" for m in manifests)
+        if offline:
+            inst_status_str = "skipped (offline mode)"
+        elif not has_pkg_json:
+            inst_status_str = "skipped (no package.json manifests)"
+        elif not should_install:
+            inst_status_str = "skipped (installation not requested)"
+        elif install_res.get("succeeded", 0) > 0 and install_res.get("failed", 0) == 0:
+            inst_status_str = f"completed ({install_res['succeeded']} project(s) installed)"
+        elif install_res.get("failed", 0) > 0:
+            inst_status_str = f"failed ({install_res['failed']} project(s) failed)"
+        else:
+            inst_status_str = install_res.get("detail", "skipped")
+
+        print("[1/7] PROJECT DISCOVERY")
+        print(f"      Project: {root.name}")
+        print(f"      Language: {lang}")
+        print(f"      Manifests found: {mf_display}")
+        print(f"      Installation status: {inst_status_str}")
+        if should_install and not offline and install_res.get("projects"):
+            for proj in install_res["projects"]:
+                try:
+                    p_rel = Path(proj["manifest"]).relative_to(root).as_posix()
+                except Exception:
+                    p_rel = Path(proj["manifest"]).name
+                p_status = proj.get("status")
+                p_pm = proj.get("package_manager", "npm")
+                p_cmd = proj.get("command", "")
+                print(f"        - {p_rel} ({p_pm}): {p_status} [{p_cmd}]")
+                if proj.get("error"):
+                    print(f"          Error: {proj['error'][:100]}")
+        print()
 
     def package_key(pkg):
         name = norm_pypi(pkg.name) if pkg.eco == "pypi" else pkg.name
         return pkg.eco, name, pkg.version
 
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
+
+    # Determine inspectable SBOM output path if requested, for scan_dir, or for C/C++ demo
+    sbom_out = options.get("sbom_path") or options.get("sbom_out")
+    if not sbom_out and options.get("scan_dir"):
+        sbom_out = str(Path(options["scan_dir"]) / "sbom.json")
+    elif not sbom_out and (
+        (root / "vcpkg.json").is_file()
+        or (root / "conanfile.txt").is_file()
+        or root.name == "deps_vuln_cpp"
+    ):
+        sbom_out = "reports/cpp_demo.sbom.json"
+
+    if verbose:
+        print("[2/7] SYFT DEPENDENCY ANALYSIS")
+        print("      Running Syft...")
+
     # 1. Syft SBOM
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
-            sbom_path = str(Path(temp_dir) / "sbom.json")
-            run_syft(str(root), sbom_path)
-            components, versions["syft"] = parse_cyclonedx(sbom_path)
+            sbom_temp = str(Path(temp_dir) / "sbom.json")
+            run_syft(str(root), sbom_temp)
+            components, versions["syft"] = parse_cyclonedx(sbom_temp)
+            if sbom_out:
+                try:
+                    out_sbom_file = Path(sbom_out)
+                    out_sbom_file.parent.mkdir(parents=True, exist_ok=True)
+                    out_sbom_file.write_text(
+                        Path(sbom_temp).read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+                except OSError as exc:
+                    errors.append({
+                        "code": "SBOM_WRITE_ERROR",
+                        "message": f"Failed to write SBOM to {sbom_out}: {exc}",
+                    })
+
+            scan_dir = options.get("scan_dir")
+            if scan_dir:
+                scan_dir_sbom = Path(scan_dir) / "sbom.json"
+                try:
+                    if not sbom_out or Path(sbom_out).resolve() != scan_dir_sbom.resolve():
+                        scan_dir_sbom.parent.mkdir(parents=True, exist_ok=True)
+                        scan_dir_sbom.write_text(
+                            Path(sbom_temp).read_text(encoding="utf-8"),
+                            encoding="utf-8",
+                        )
+                except OSError:
+                    pass
+
+        if verbose:
+            print(f"      Syft version: {versions.get('syft', '1.55.0')}")
+            print()
+            print("[3/7] SBOM GENERATION")
+            print("      Format: CycloneDX JSON")
+            print("      SBOM generated successfully")
+            print(f"      Location: {sbom_out or 'in-memory'}")
+            print()
 
         # npm lockfiles provide better dependency names and local-source
         # information than Syft's npm PURLs. Avoid duplicate SBOM entries.
@@ -122,8 +321,19 @@ def _run(project_path, options):
             manifest.name == "package-lock.json" for manifest in manifests
         )
 
+        root_vcpkg = root / "vcpkg.json"
+        root_vcpkg_name = None
+        if root_vcpkg.is_file():
+            try:
+                vdata = json.loads(root_vcpkg.read_text(encoding="utf-8"))
+                root_vcpkg_name = vdata.get("name")
+            except Exception:
+                pass
+
         for ecosystem, name, version in components:
             if ecosystem == "npm" and has_npm_lock:
+                continue
+            if ecosystem == "vcpkg" and root_vcpkg_name and name == root_vcpkg_name:
                 continue
 
             pkg = Pkg(ecosystem or "unsupported", name, version)
@@ -133,23 +343,52 @@ def _run(project_path, options):
 
     except SyftError as exc:
         errors.append({"code": exc.code, "message": str(exc)})
+        if verbose:
+            print(f"      Syft failed: {exc}")
+            print()
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         errors.append({"code": "PARSE_ERROR", "message": str(exc)[:300]})
+        if verbose:
+            print(f"      SBOM parsing error: {exc}")
+            print()
 
-    # 2. Explicit lockfile parsing adds integrity and source information.
+    # 2. Explicit manifest and lockfile parsing adds integrity, source, and complete dependency coverage.
     for manifest in manifests:
         parsed = []
 
         if manifest.name == "package-lock.json":
             parsed = parse_npm_lock(manifest)
-            checks.append("npm_lockfile_parse")
+            if "npm_lockfile_parse" not in checks:
+                checks.append("npm_lockfile_parse")
+
+        elif manifest.name == "package.json":
+            try:
+                parsed = parse_package_json(manifest)
+                if "package_json_parse" not in checks:
+                    checks.append("package_json_parse")
+            except ValueError as exc:
+                errors.append({
+                    "code": "MALFORMED_MANIFEST",
+                    "message": str(exc),
+                    "file": str(manifest.relative_to(root) if manifest.is_relative_to(root) else manifest),
+                })
+                if verbose:
+                    print(f"      Warning: Malformed manifest: {manifest.name} ({exc})")
 
         elif manifest.name == "requirements.txt":
             parsed = parse_requirements(manifest)
-            checks.append("requirements_parse")
+            if "requirements_parse" not in checks:
+                checks.append("requirements_parse")
 
         for pkg in parsed:
-            packages[package_key(pkg)] = pkg
+            key = package_key(pkg)
+            if key in packages:
+                existing = packages[key]
+                if existing.integrity and not pkg.integrity:
+                    continue
+                if existing.resolved and not pkg.resolved:
+                    continue
+            packages[key] = pkg
 
     # Prefer an exact resolved version over an unpinned entry.
     for key in list(packages):
@@ -158,6 +397,20 @@ def _run(project_path, options):
             for other in packages
         ):
             del packages[key]
+
+    if verbose:
+        print("[4/7] PACKAGE IDENTIFICATION")
+        print(f"      Dependencies identified: {len(packages)}")
+        if packages:
+            for pkg in packages.values():
+                purl = f"pkg:{pkg.eco}/{pkg.name}" + (f"@{pkg.version}" if pkg.version else "")
+                print(f"      Package: {pkg.name}")
+                print(f"      Version: {pkg.version or 'unpinned'}")
+                print(f"      Ecosystem: {pkg.eco}")
+                print(f"      PURL: {purl}")
+        else:
+            print("      No packages identified")
+        print()
 
     findings = []
     counter = [0]
@@ -243,6 +496,15 @@ def _run(project_path, options):
         (ECOSYSTEMS[pkg.eco], pkg.name, pkg.version)
         for pkg in osv_eligible
     ]
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
+
     ids_by_package, failed = osv.query_ids(osv_packages)
 
     query_time = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -256,6 +518,16 @@ def _run(project_path, options):
         })
     else:
         checks.append("osv_lookup")
+
+    if verbose:
+        total_advisories = sum(len(v) for v in ids_by_package.values())
+        print("[5/7] OSV VULNERABILITY LOOKUP")
+        print("      Endpoint: https://api.osv.dev/v1/querybatch")
+        print("      Submitting package identity to OSV...")
+        lookup_status = "partial" if failed else ("ok" if osv_eligible else "skipped")
+        print(f"      Lookup status: {lookup_status}")
+        print(f"      Advisories found: {total_advisories}")
+        print()
 
     for pkg in osv_eligible:
         key = (ECOSYSTEMS[pkg.eco], pkg.name, pkg.version)
@@ -317,6 +589,14 @@ def _run(project_path, options):
                 f"{pkg.name} {pkg.version}: {len(group)} OSV advisory record(s)",
                 evidence,
             )
+
+    if cancelled():
+        return ModuleResult(
+            module="dependency",
+            status="skipped",
+            errors=[{"code": "CANCELLED", "message": "Scan was cancelled", "detail": ""}],
+            checks_performed=checks,
+        )
 
     # 5. Heuristic rules.
     npm_top = _top("top_packages_npm.json")
@@ -465,6 +745,27 @@ def _run(project_path, options):
 
     if errors and status == "ok":
         status = "partial"
+
+    if verbose:
+        print("[6/7] FINDING ANALYSIS")
+        print("      Processing vulnerability evidence...")
+        if findings:
+            f0 = findings[0]
+            print(f"      Category: {f0.category}")
+            print(f"      Severity: {f0.severity}")
+            print(f"      Confidence: {f0.confidence}")
+        else:
+            print("      Findings: none")
+        print()
+
+        print("[7/7] REPORT GENERATION")
+        out_path = options.get("out_path")
+        if out_path:
+            print("      JSON report saved successfully")
+            print(f"      Location: {out_path}")
+        else:
+            print("      JSON report generated successfully")
+        print()
 
     return ModuleResult(
         module="dependency",

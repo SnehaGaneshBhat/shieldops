@@ -168,3 +168,47 @@ def test_vuln_severity_cvss_fallbacks():
     assert vuln_severity(v_vec) == "CRITICAL"
 
     assert vuln_severity({}) == "UNKNOWN"
+
+
+def test_osv_single_query_official_endpoint(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.url == "https://api.osv.dev/v1/query"
+        return httpx.Response(200, json={"vulns": [{"id": "GHSA-single-vuln"}]})
+
+    client = OSVClient(tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    ids = client.query(("npm", "lodash", "4.17.20"))
+    assert ids == ["GHSA-single-vuln"]
+    assert len(calls) == 1
+    assert calls[0].method == "POST"
+
+
+def test_osv_batch_query_official_endpoint(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        assert request.url == "https://api.osv.dev/v1/querybatch"
+        return httpx.Response(200, json={"results": [{"vulns": [{"id": "GHSA-batch-1"}]}]})
+
+    client = OSVClient(tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    results, failed = client.query_ids([("npm", "lodash", "4.17.20")])
+    assert failed == []
+    assert results[("npm", "lodash", "4.17.20")] == ["GHSA-batch-1"]
+    assert len(calls) == 1
+    assert calls[0].method == "POST"
+
+
+def test_osv_query_zero_advisories(tmp_path):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json={})
+
+    client = OSVClient(tmp_path, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    ids = client.query(("vcpkg", "curl", "7.80.0"))
+    assert ids == []
+    assert len(calls) == 1
