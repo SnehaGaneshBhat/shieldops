@@ -11,6 +11,8 @@ ECOSYSTEMS = {
     "golang": "Go",
     "cargo": "crates.io",
     "maven": "Maven",
+    "vcpkg": "vcpkg",
+    "conan": "ConanCenter",
 }
 
 

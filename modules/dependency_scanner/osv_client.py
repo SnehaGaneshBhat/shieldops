@@ -7,6 +7,11 @@ from pathlib import Path
 import httpx
 
 
+OSV_BASE_URL = "https://api.osv.dev"
+OSV_QUERY_ENDPOINT = "https://api.osv.dev/v1/query"
+OSV_QUERYBATCH_ENDPOINT = "https://api.osv.dev/v1/querybatch"
+
+
 class OSVError(Exception):
     pass
 
@@ -14,8 +19,10 @@ class OSVError(Exception):
 class OSVClient:
     def __init__(self, cache_dir, offline=False, client=None, base=None):
         self.base = (
-            base or os.environ.get("BUILDGUARD_OSV_URL", "https://api.osv.dev")
+            base or os.environ.get("BUILDGUARD_OSV_URL", OSV_BASE_URL)
         ).rstrip("/")
+        self.query_url = f"{self.base}/v1/query"
+        self.querybatch_url = f"{self.base}/v1/querybatch"
         self.dir = Path(cache_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.offline = offline
@@ -42,13 +49,14 @@ class OSVClient:
             json.dumps(value), encoding="utf-8"
         )
 
-    def _request(self, method, path, payload=None):
+    def _request(self, method, url_or_path, payload=None):
+        url = url_or_path if str(url_or_path).startswith("http") else self.base + url_or_path
         last = "unknown"
 
         for attempt in range(3):
             try:
                 response = self.http.request(
-                    method, self.base + path, json=payload
+                    method, url, json=payload
                 )
 
                 if response.status_code == 200:
@@ -80,12 +88,41 @@ class OSVClient:
             if token:
                 body["page_token"] = token
 
-            result = self._request("POST", "/v1/query", body)
+            result = self._request("POST", self.query_url, body)
             ids.extend(v["id"] for v in result.get("vulns", []))
             token = result.get("next_page_token")
 
             if not token:
                 return ids
+
+    def query(self, package):
+        """Query a single package using the official OSV /v1/query endpoint."""
+        ecosystem, name, version = package
+        key = self._pkg_key(package)
+        cached = self._read("q", key)
+
+        if cached is not None:
+            return cached
+
+        if self.offline:
+            raise OSVError("offline and not cached")
+
+        body = {
+            "package": {"name": name, "ecosystem": ecosystem},
+            **({"version": version} if version is not None else {}),
+        }
+
+        try:
+            result = self._request("POST", self.query_url, body)
+            if result.get("next_page_token"):
+                ids = self._paginate(package)
+            else:
+                ids = [v["id"] for v in result.get("vulns", [])]
+
+            self._write("q", key, ids)
+            return ids
+        except (OSVError, KeyError, TypeError) as exc:
+            raise OSVError(f"OSV query failed for {package}: {exc}") from exc
 
     def query_ids(self, packages):
         output = {}
@@ -120,7 +157,7 @@ class OSVClient:
 
             try:
                 results = self._request(
-                    "POST", "/v1/querybatch", {"queries": queries}
+                    "POST", self.querybatch_url, {"queries": queries}
                 )["results"]
 
                 if len(results) != len(chunk):

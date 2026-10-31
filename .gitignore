@@ -15,3 +15,11 @@ __pycache__/
 *.sbom
 # BuildGuard runtime data
 .buildguard/
+# Node.js dependencies
+node_modules/
+
+# Generated reports
+reports/
+
+# Compiled demo binaries
+test_samples/deps_vuln_cpp/main
