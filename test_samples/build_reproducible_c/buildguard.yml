@@ -1,0 +1,13 @@
+version: 1
+build:
+  image: gcc@sha256:20eec427045c47d0aad1bd28c81d435916c327cd992240aa78350f755d04d04a
+  workdir: /src
+  commands:
+    - gcc -O2 -g0 -ffile-prefix-map=/src=. -frandom-seed=buildguard -Wl,--build-id=none -o /out/app src/main.c
+  artifact: /out/app
+  env:
+    SOURCE_DATE_EPOCH: '1700000000'
+    TZ: UTC
+    LC_ALL: C
+  version_commands:
+    - gcc --version

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 1,
+  "artifact_name": "app",
+  "sha256": "1a3d63201a087719f29832736bbf3df68e766807fc75738cf690a606969b2f5b",
+  "size": 15752,
+  "recipe_sha256": "8e75aba00f1c0d9c7903884bd72b0c3659c706b41cc69380d9c92cfb062347f0",
+  "image": "gcc@sha256:20eec427045c47d0aad1bd28c81d435916c327cd992240aa78350f755d04d04a",
+  "git_commit": null,
+  "created_at": "2026-10-31T15:00:31Z",
+  "trusted_copy": ".buildguard/trusted/app"
+}
