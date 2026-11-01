@@ -8,12 +8,11 @@
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Linters", "Other"],
   "main": "./dist/extension.js",
-  "files": ["dist/**", "media/demo-report.json", "README.md", "package.json"],
+  "files": ["dist/**", "README.md", "package.json"],
   "contributes": {
     "commands": [
       { "command": "buildguard.scan", "title": "BuildGuard: Scan Workspace" },
       { "command": "buildguard.showReport", "title": "BuildGuard: Show Last Report" },
-      { "command": "buildguard.showDemoReport", "title": "BuildGuard: Show Demo Report (No Backend)" },
       { "command": "buildguard.exportHtml", "title": "BuildGuard: Export Report as HTML" },
       { "command": "buildguard.clearDiagnostics", "title": "BuildGuard: Clear Problems" }
     ],
@@ -24,6 +23,9 @@
       "buildguard.autoStartBackend": { "type": "boolean", "default": true, "description": "Start backend when unavailable (requires buildguard.backendCwd)." },
       "buildguard.backendCwd": { "type": "string", "default": "", "description": "Repository path containing .venv and backend/." },
       "buildguard.modules": { "type": "array", "items": { "type": "string", "enum": ["dependency", "build", "compiler"] }, "default": ["dependency", "build", "compiler"], "description": "Analysis modules to request." },
+      "buildguard.recipePath": { "type": "string", "default": "buildguard.yml", "description": "Build recipe path relative to the workspace." },
+      "buildguard.manifestPath": { "type": "string", "default": "", "description": "Optional trusted release manifest path relative to the workspace." },
+      "buildguard.distributedArtifact": { "type": "string", "default": "", "description": "Optional distributed artifact path relative to the workspace; set together with buildguard.manifestPath." },
       "buildguard.compilerSample": { "type": "string", "default": "test_samples/compiler_hello", "description": "Compiler sample path relative to the workspace." }
     } }
   },
@@ -32,7 +34,8 @@
     "compile": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "lint": "tsc --noEmit",
-    "test:demo": "node --test test/demo-report.test.cjs",
+    "test": "npm run lint && npm run test:backend",
+    "test:backend": "make -C .. test",
     "mock": "node test/mock-server.cjs",
     "package": "vsce package --no-dependencies --allow-missing-repository --skip-license -o ../buildguard-0.1.0.vsix"
   },

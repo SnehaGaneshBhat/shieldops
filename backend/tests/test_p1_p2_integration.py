@@ -6,6 +6,7 @@ persistence, and real module execution without bypassing the architecture.
 """
 
 import json
+import hashlib
 import os
 import time
 from pathlib import Path
@@ -109,7 +110,6 @@ def test_real_api_dependency_scan_vuln_npm(tmp_path, monkeypatch):
     assert report_resp.status_code == 200
     report = report_resp.json()
     assert len(report["items"]) >= 1
-
     vuln_items = [it for it in report["items"] if it["category"] == "KNOWN_VULNERABILITY"]
     assert len(vuln_items) == 1
     item = vuln_items[0]
@@ -119,6 +119,53 @@ def test_real_api_dependency_scan_vuln_npm(tmp_path, monkeypatch):
     assert item["confidence"] == "CONFIRMED"
     assert item["explanation_source"] == "template"
     assert "advisory exists" in item["plain_explanation"]
+
+
+def test_real_api_artifact_verification_is_in_html_report(tmp_path, monkeypatch):
+    """Verify a distributed artifact without Docker and include it in HTML output."""
+    monkeypatch.setenv("BUILDGUARD_DATA_DIR", str(tmp_path / "data"))
+    project = tmp_path / "artifact_project"
+    project.mkdir()
+    artifact = project / "release.bin"
+    artifact.write_bytes(b"trusted release bytes")
+    manifest = project / "release_manifest.json"
+    manifest.write_text(json.dumps({
+        "artifact_name": artifact.name,
+        "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        "size": artifact.stat().st_size,
+    }))
+
+    response = client.post(
+        "/v1/scans",
+        headers=H,
+        json={
+            "project_path": str(project),
+            "modules": ["build"],
+            "options": {
+                "recipe_path": "missing-buildguard.yml",
+                "manifest_path": manifest.name,
+                "distributed_artifact": artifact.name,
+            },
+        },
+    )
+    assert response.status_code == 202
+    scan_id = response.json()["scan_id"]
+
+    state = _wait_for_scan(client, scan_id)
+    assert state["state"] == "completed_with_errors"
+    report_response = client.get(f"/v1/scans/{scan_id}/report", headers=H)
+    assert report_response.status_code == 200
+    report = report_response.json()
+    assert report["module_status"]["build"]["status"] == "partial"
+    assert any(
+        item["title"] == "Distributed file matches the trusted build hash"
+        for item in report["items"]
+    )
+
+    html_response = client.get(f"/v1/scans/{scan_id}/report.html", headers=H)
+    assert html_response.status_code == 200
+    assert "text/html" in html_response.headers["content-type"]
+    assert "Distributed file matches the trusted build hash" in html_response.text
 
 
 # 3. Suspicious npm dependency

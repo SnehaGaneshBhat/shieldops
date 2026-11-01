@@ -1,34 +1,40 @@
 # BuildGuard VS Code Extension
 
-BuildGuard connects VS Code to the local BuildGuard REST service at `127.0.0.1:8787`. Run **BuildGuard: Scan Workspace** from the command palette or the status bar. Findings open in a grouped report; supported manifest findings also appear in the Problems panel.
+The extension runs the real BuildGuard backend against the open workspace. A scan combines the selected dependency, build-integrity, and compiler checks into one report. Completed findings appear in the report view, supported dependency findings are added to Problems, and the report can be exported as a standalone HTML file.
 
-## Development
+## Prerequisites
+
+- Python 3.12 and `python3.12-venv`
+- Node.js and npm
+- Docker running for reproducible-build and compiler checks
+- Syft on `PATH` for dependency SBOM generation
+
+Dependency checks use the configured registry/advisory sources. Template explanations are used unless `BUILDGUARD_LLM_API_KEY` is configured for the backend.
+
+## Set Up And Run
+
+From the repository root:
 
 ```sh
-npm install
-npm run lint
-npm run compile
+make venv
+npm --prefix extension ci
+npm --prefix extension test
 ```
 
-Press F5 to open an Extension Development Host. Set `buildguard.backendUrl` and `buildguard.token` for a manually started service. Automatic startup requires `buildguard.backendCwd` to point at the repository root containing `.venv` and `backend/`.
+Open the repository root in VS Code, choose **Run BuildGuard Extension** in Run and Debug, and press F5. In the Extension Development Host, open the project folder to scan. Set `buildguard.backendCwd` to the absolute repository path in Settings; the extension will start the backend from `.venv` and pass it a local token automatically.
 
-### Preview with the local mock
+Run **BuildGuard: Scan Workspace** from the Command Palette or click the BuildGuard status-bar item. By default, all three modules are requested. Select **BuildGuard: Show Last Report** to reopen the latest result and **BuildGuard: Export Report as HTML** to save it. The backend also persists HTML at `/v1/scans/{scan_id}/report.html`.
 
-In the extension directory, start the mock service with `npm run mock`. In the Extension Development Host workspace settings, set:
+To use a manually started backend instead, run `make run-backend TOKEN=dev-token` from the repository root, then set `buildguard.backendUrl` to `http://127.0.0.1:8787` and `buildguard.token` to `dev-token` in the Extension Development Host.
 
-```json
-{
-  "buildguard.backendUrl": "http://127.0.0.1:8788",
-  "buildguard.token": "buildguard-local-mock-token"
-}
-```
+## Scan Settings
 
-Then run **BuildGuard: Scan Workspace**. The mock cycles through queued, running, and completed module states and returns a labelled fixture; it does not scan files. Do not use this token outside the local mock.
+Use workspace Settings to configure `buildguard.modules` (`dependency`, `build`, and `compiler`), `buildguard.recipePath`, and `buildguard.compilerSample`. Paths are relative to the open workspace. For release-integrity checking, set both `buildguard.manifestPath` and `buildguard.distributedArtifact`; the manifest comparison runs even when Docker or a build recipe is unavailable. The report marks checks that could not run as partial or skipped rather than treating them as clean.
 
-### Demo report without a backend
+Build reproducibility requires a valid `buildguard.yml` with an image pinned by digest and an available Docker daemon. The compiler MVP analyzes C/Linux ELF samples. A missing compiler sample, unavailable tool, missing manifest, or incomplete analysis is reported as a limitation in the combined report.
 
-Run **BuildGuard: Show Demo Report (No Backend)** from the command palette to open the bundled sample report. It uses fictional data, does not connect to the service, does not scan workspace files, and does not add Problems diagnostics. You can still preview **BuildGuard: Export Report as HTML** with the demo report.
+## Tests And Packaging
 
-To check that the demo report covers all seven finding categories and that the command and fixture are included in the extension package, run `npm run test:demo` from this directory. Then press F5 and run **BuildGuard: Show Demo Report (No Backend)** in the Extension Development Host.
+`npm --prefix extension test` typechecks the extension and runs the repository's real non-Docker backend pytest suite through `make test`. This suite covers API scans, real sample projects, combined reports, and HTML generation. `make test-docker` runs the additional Docker-dependent tests.
 
-Package from the repository root with `make package`; the artifact is `buildguard-0.1.0.vsix`.
+Build the extension with `npm --prefix extension run compile`. Package the VSIX from the repository root with `make package`; the artifact is `buildguard-0.1.0.vsix`.

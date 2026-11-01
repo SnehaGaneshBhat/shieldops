@@ -74,6 +74,7 @@ def run(project_path, options=None):
 
     findings, errors, checks, tools = [], [], [], {}
     tmp = None
+    integrity_error = False
 
     def result(status):
         for i, f in enumerate(findings, 1):
@@ -94,6 +95,34 @@ def run(project_path, options=None):
         return bool(cb and cb())
 
     try:
+        manifest_path = options.get('manifest_path')
+        distributed_artifact = options.get('distributed_artifact')
+
+        if manifest_path or distributed_artifact:
+            if not manifest_path or not distributed_artifact:
+                errors.append(_err(
+                    'INVALID_INPUT',
+                    'manifest_path and distributed_artifact must be provided together'
+                ))
+                integrity_error = True
+            else:
+                try:
+                    verification = manifest.verify_artifact(
+                        _resolve(project_path, manifest_path),
+                        _resolve(project_path, distributed_artifact)
+                    )
+                except (OSError, ValueError, KeyError) as e:
+                    errors.append(_err(
+                        'ARTIFACT_VERIFY_FAILED',
+                        f'{type(e).__name__}: {e}'
+                    ))
+                    integrity_error = True
+                else:
+                    findings.append(manifest.finding_from_verify(verification))
+                    checks.append(
+                        'Compared the distributed file with the trusted release manifest'
+                    )
+
         try:
             recipe = load_recipe(
                 project_path,
@@ -107,7 +136,7 @@ def run(project_path, options=None):
                     {'reason': str(e)}
                 )
             )
-            return result('skipped')
+            return result('partial' if integrity_error or checks else 'skipped')
 
         except RecipeError as e:
             errors.append(_err('RECIPE_INVALID', str(e)))
@@ -123,7 +152,7 @@ def run(project_path, options=None):
                     }
                 )
             )
-            return result('skipped')
+            return result('partial' if integrity_error or checks else 'skipped')
 
         if not docker_runner.docker_available():
             errors.append(
@@ -132,7 +161,7 @@ def run(project_path, options=None):
                     'Docker daemon is not reachable'
                 )
             )
-            return result('error')
+            return result('partial' if checks else 'error')
 
         scan_id = options.get('scan_id', 'adhoc')
         timeout = int(options.get('docker_timeout', 120))
@@ -269,19 +298,7 @@ def run(project_path, options=None):
                 )
             )
 
-        if options.get('manifest_path') and options.get('distributed_artifact'):
-            v = manifest.verify_artifact(
-                _resolve(project_path, options['manifest_path']),
-                _resolve(project_path, options['distributed_artifact'])
-            )
-
-            findings.append(manifest.finding_from_verify(v))
-
-            checks.append(
-                'Compared the distributed file with the trusted release manifest'
-            )
-
-        return result('ok')
+        return result('partial' if integrity_error else 'ok')
 
     except Exception as e:  # a module never raises to the orchestrator
         errors.append(
