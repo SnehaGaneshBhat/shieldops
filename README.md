@@ -44,33 +44,33 @@ make run-backend TOKEN=dev-token
 
 The API listens on `http://127.0.0.1:8787`. Its health endpoint is `http://127.0.0.1:8787/v1/health`; scan and report endpoints require the `X-BuildGuard-Token` header. The service is intended for local use and binds to loopback.
 
-## Install The VS Code Extension
+### Windows PowerShell
 
-Build a VSIX package from the repository root:
+The Makefile commands above assume GNU Make and a Unix-like shell. In PowerShell, use these equivalents from the repository root (Python 3.12 must be installed):
 
-```sh
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+
 npm --prefix extension ci
 npm --prefix extension run package
 ```
 
-The package is written to `buildguard-0.1.0.vsix`. Install it using either method:
+To start the backend, set its token and run it with the virtual-environment Python:
 
-```sh
-code --install-extension buildguard-0.1.0.vsix
+```powershell
+$env:BUILDGUARD_TOKEN = "dev-token"
+.\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8787
 ```
 
-Or in VS Code, open the Command Palette, run **Extensions: Install from VSIX...**, and select the package. Reload VS Code after installation.
+Run backend tests with:
 
-## Run A Scan
+```powershell
+.\.venv\Scripts\python.exe -m pytest -m 'not docker' -q
+```
 
-1. Open the project folder you want to scan in VS Code.
-2. Set the backend connection in Settings. For automatic backend startup, set `buildguard.backendCwd` to the absolute path of this repository. Leave `buildguard.token` empty; the extension creates a local token and passes it to the backend it starts.
-3. Run **BuildGuard: Scan Workspace** from the Command Palette or click the BuildGuard status-bar item.
-4. Review the combined report. Use **BuildGuard: Show Last Report** to reopen it, or **BuildGuard: Export Report as HTML** to save it.
-
-By default, the extension requests all three modules: `dependency`, `build`, and `compiler`. The report lists each module's status and any limitations. The backend also stores an HTML report for each scan at `/v1/scans/{scan_id}/report.html`.
-
-For a manually started backend, run `make run-backend TOKEN=dev-token`, then set these VS Code settings:
+The `make setup` prerequisite check runs `scripts/check_env.sh`; use Git Bash or WSL to run that script on Windows.
 
 ```json
 {
