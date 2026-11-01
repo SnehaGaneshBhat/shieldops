@@ -15,6 +15,7 @@ BuildGuard reports only on checks that ran. A clean result is not proof that a p
 ## Requirements
 
 - Python 3.12 and the `python3.12-venv` package
+- Python packages listed in `backend/requirements.txt`
 - Node.js 20 and npm
 - Docker running for build-integrity and compiler checks
 - Syft on `PATH` for SBOM generation
@@ -22,55 +23,28 @@ BuildGuard reports only on checks that ran. A clean result is not proof that a p
 
 An LLM API key is optional. Set `BUILDGUARD_LLM_API_KEY` for the backend if generated explanations are desired; without it, BuildGuard uses template explanations. Keep tokens and API keys out of committed workspace settings.
 
+Python packages are installed from `backend/requirements.txt`. Extension packages are managed separately by npm in `extension/package-lock.json`. Docker, Syft, Node.js, and GNU Make are system tools, not Python packages.
+
 ## Set Up The Backend
-
-From the repository root, create the Python environment and install backend dependencies:
-
-```sh
-make venv
-```
-
-Check the environment prerequisites with:
-
-```sh
-make setup
-```
-
-To run the backend manually, start it with a known local token:
-
-```sh
-make run-backend TOKEN=dev-token
-```
-
-The API listens on `http://127.0.0.1:8787`. Its health endpoint is `http://127.0.0.1:8787/v1/health`; scan and report endpoints require the `X-BuildGuard-Token` header. The service is intended for local use and binds to loopback.
 
 ### Windows PowerShell
 
-The Makefile commands above assume GNU Make and a Unix-like shell. In PowerShell, use these equivalents from the repository root (Python 3.12 must be installed):
+Run these commands from the repository root. This setup does not require GNU Make or winget:
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-
-npm --prefix extension ci
-npm --prefix extension run package
 ```
 
-To start the backend, set its token and run it with the virtual-environment Python:
+To start the backend manually:
 
 ```powershell
 $env:BUILDGUARD_TOKEN = "dev-token"
 .\.venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8787
 ```
 
-Run backend tests with:
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -m 'not docker' -q
-```
-
-The `make setup` prerequisite check runs `scripts/check_env.sh`; use Git Bash or WSL to run that script on Windows.
+For a manually started backend, use these VS Code settings:
 
 ```json
 {
@@ -79,6 +53,26 @@ The `make setup` prerequisite check runs `scripts/check_env.sh`; use Git Bash or
   "buildguard.autoStartBackend": false
 }
 ```
+
+Run backend tests in PowerShell with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -m 'not docker' -q
+```
+
+### Linux And macOS
+
+GNU Make is a command-line task runner, not a GUI. It is optional; the commands below are shortcuts for the repository's Makefile. From the repository root:
+
+```sh
+make venv
+make setup
+make run-backend TOKEN=dev-token
+```
+
+The API listens on `http://127.0.0.1:8787`. Its health endpoint is `http://127.0.0.1:8787/v1/health`; scan and report endpoints require the `X-BuildGuard-Token` header. The service is intended for local use and binds to loopback.
+
+On Windows, use the PowerShell commands above. You do not need to install winget, a GUI, or GNU Make to set up or run the backend.
 
 Use workspace Settings to choose modules or configure paths:
 
@@ -103,7 +97,7 @@ Open the repository in VS Code, choose **Run BuildGuard Extension** in Run and D
 
 ## Tests
 
-Run the extension typecheck and the real non-Docker backend test suite with:
+Run the extension typecheck and the real non-Docker backend test suite with the npm script on systems that have GNU Make:
 
 ```sh
 npm --prefix extension test
