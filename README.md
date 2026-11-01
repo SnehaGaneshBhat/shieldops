@@ -77,7 +77,7 @@ On Windows, use the PowerShell commands above. You do not need to install winget
 Use workspace Settings to choose modules or configure paths:
 
 - `buildguard.recipePath`: build recipe path, relative to the open workspace; defaults to `buildguard.yml`.
-- `buildguard.compilerSample`: compiler sample directory; defaults to `test_samples/compiler_hello`.
+- `buildguard.compilerSample`: optional C/Linux ELF sample directory containing `src/*.c`; empty by default, so compiler analysis is skipped until a sample is configured.
 - `buildguard.manifestPath` and `buildguard.distributedArtifact`: set both to include trusted-manifest verification in the combined report. The verification can run without Docker or a build recipe.
 - `buildguard.useLLM`: request generated explanations from the backend; template explanations remain available as fallback.
 

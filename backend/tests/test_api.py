@@ -52,7 +52,11 @@ def test_full_scan_with_fake_modules(tmp_path, monkeypatch):
 
     rep = client.get(f'/v1/scans/{sid}/report', headers=H)
     assert rep.status_code == 200
-    assert set(rep.json()['module_status']) == {'dependency', 'build'}
+    report = rep.json()
+    assert set(report['module_status']) == {'dependency', 'build'}
+    assert report['explanation_source'] == 'template'
+    assert report['correlations'] == []
+    assert 'by_category' in report['summary_counts']
 
     assert client.get(
         f'/v1/scans/{sid}/findings', headers=H

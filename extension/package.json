@@ -26,7 +26,7 @@
       "buildguard.recipePath": { "type": "string", "default": "buildguard.yml", "description": "Build recipe path relative to the workspace." },
       "buildguard.manifestPath": { "type": "string", "default": "", "description": "Optional trusted release manifest path relative to the workspace." },
       "buildguard.distributedArtifact": { "type": "string", "default": "", "description": "Optional distributed artifact path relative to the workspace; set together with buildguard.manifestPath." },
-      "buildguard.compilerSample": { "type": "string", "default": "test_samples/compiler_hello", "description": "Compiler sample path relative to the workspace." }
+      "buildguard.compilerSample": { "type": "string", "default": "", "description": "Optional C/Linux ELF sample directory inside the workspace. Leave empty to skip compiler analysis rather than scan a demo fixture." }
     } }
   },
   "scripts": {

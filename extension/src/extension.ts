@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext) {
     running = true; status.text = '$(sync~spin) BuildGuard';
     try {
       const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'BuildGuard · Workspace scan', cancellable: true }, async (progress, token) => {
-        progress.report({ message: 'Connecting to local analysis service' }); await backend.ensure(() => client.health());
+        progress.report({ message: 'Connecting to local analysis service' }); await backend.ensure(() => client.health(), folder.uri.fsPath);
         if (token.isCancellationRequested) throw new Error('Scan cancelled.');
         const cfg = vscode.workspace.getConfiguration('buildguard');
         const modules = cfg.get<string[]>('modules', ['dependency', 'build', 'compiler']);
@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
         const manifestPath = cfg.get<string>('manifestPath', '').trim();
         const distributedArtifact = cfg.get<string>('distributedArtifact', '').trim();
         if (Boolean(manifestPath) !== Boolean(distributedArtifact)) throw new Error('Set both buildguard.manifestPath and buildguard.distributedArtifact to verify an artifact, or leave both empty.');
-        const request: ScanRequest = { project_path: folder.uri.fsPath, modules, options: { use_llm: cfg.get<boolean>('useLLM', true), recipe_path: recipePath, manifest_path: manifestPath || null, distributed_artifact: distributedArtifact || null, compiler_sample: cfg.get<string>('compilerSample', 'test_samples/compiler_hello'), run_sandbox: false } };
+        const request: ScanRequest = { project_path: folder.uri.fsPath, modules, options: { use_llm: cfg.get<boolean>('useLLM', true), recipe_path: recipePath, manifest_path: manifestPath || null, distributed_artifact: distributedArtifact || null, compiler_sample: cfg.get<string>('compilerSample', '').trim(), run_sandbox: false } };
         const { scan_id } = await client.startScan(request); out.appendLine(`Started scan ${scan_id}`); let state: ScanStatus | undefined;
         try {
           const startedAt = Date.now();

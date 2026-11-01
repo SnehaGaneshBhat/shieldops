@@ -25,11 +25,11 @@ Open the repository root in VS Code, choose **Run BuildGuard Extension** in Run 
 
 Run **BuildGuard: Scan Workspace** from the Command Palette or click the BuildGuard status-bar item. By default, all three modules are requested. Select **BuildGuard: Show Last Report** to reopen the latest result and **BuildGuard: Export Report as HTML** to save it. The backend also persists HTML at `/v1/scans/{scan_id}/report.html`.
 
-To use a manually started backend instead, run `make run-backend TOKEN=dev-token` from the repository root, then set `buildguard.backendUrl` to `http://127.0.0.1:8787` and `buildguard.token` to `dev-token` in the Extension Development Host.
+To use a manually started backend instead, run `make run-backend TOKEN=dev-token` from the repository root; the Makefile restricts it to the repository folder by default. Then set `buildguard.backendUrl` to `http://127.0.0.1:8787` and `buildguard.token` to `dev-token` in the Extension Development Host.
 
 ## Scan Settings
 
-Use workspace Settings to configure `buildguard.modules` (`dependency`, `build`, and `compiler`), `buildguard.recipePath`, and `buildguard.compilerSample`. Paths are relative to the open workspace. For release-integrity checking, set both `buildguard.manifestPath` and `buildguard.distributedArtifact`; the manifest comparison runs even when Docker or a build recipe is unavailable. The report marks checks that could not run as partial or skipped rather than treating them as clean.
+Use workspace Settings to configure `buildguard.modules` (`dependency`, `build`, and `compiler`), `buildguard.recipePath`, and `buildguard.compilerSample`. Paths are relative to the open workspace. Compiler analysis is skipped when `buildguard.compilerSample` is empty; set it to a real C/Linux ELF sample directory containing `src/*.c` to run the check. For release-integrity checking, set both `buildguard.manifestPath` and `buildguard.distributedArtifact`; the manifest comparison runs even when Docker or a build recipe is unavailable. The report marks checks that could not run as partial or skipped rather than treating them as clean.
 
 Build reproducibility requires a valid `buildguard.yml` with an image pinned by digest and an available Docker daemon. The compiler MVP analyzes C/Linux ELF samples. A missing compiler sample, unavailable tool, missing manifest, or incomplete analysis is reported as a limitation in the combined report.
 

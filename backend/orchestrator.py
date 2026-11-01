@@ -1,5 +1,6 @@
 import html
 import importlib
+import logging
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
@@ -8,9 +9,11 @@ from pydantic import ValidationError
 
 from backend import docker_runner, store
 from backend.schemas import ModuleResult
+from modules.reporting import build_report, correlate
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+LOG = logging.getLogger(__name__)
 
 ENTRY = {
     'dependency': 'modules.dependency_scanner',
@@ -150,14 +153,12 @@ def _dump(f):
     return f.model_dump() if hasattr(f, 'model_dump') else dict(f)
 
 
-def _correlate(results):
+def _correlate(results, scan_id):
     try:
-        from modules.reporting import correlate  # P3
-
-        return correlate(list(results.values()))
-
+        serialized = [result.model_dump(mode='json') for result in results.values()]
+        return correlate(serialized, scan_id=scan_id)
     except Exception:
-        pass
+        LOG.exception('Reporting correlation failed for scan %s', scan_id)
 
     items = [
         f
@@ -170,14 +171,30 @@ def _correlate(results):
     for i, f in enumerate(items, 1):
         f.id = f'F-{i:03d}'
 
-    return items
+    return {
+        'scan_id': scan_id,
+        'generated_at': _now(),
+        'findings': [_dump(f) for f in items],
+        'module_status': {
+            name: {
+                'status': result.status,
+                'errors': result.errors,
+                'checks_performed': result.checks_performed
+            }
+            for name, result in results.items()
+        },
+        'tool_versions': {},
+        'correlations': [],
+        'allowed_ids': [],
+        'simulation_present': False
+    }
 
 
-def _fallback_report(scan_id, findings):
+def _fallback_report(scan_id, findings_doc):
     by_cat, by_sev, items = {}, {}, []
 
-    for f in findings:
-        d = _dump(f)
+    for d in findings_doc.get('findings', []):
+        d = dict(d)
 
         by_cat[d['category']] = by_cat.get(d['category'], 0) + 1
         by_sev[d['severity']] = by_sev.get(d['severity'], 0) + 1
@@ -199,25 +216,19 @@ def _fallback_report(scan_id, findings):
             'by_category': by_cat,
             'by_severity': by_sev
         },
+        'explanation_source': 'template',
         'items': items,
         'module_status': {},
         'limitations': list(LIMITS)
     }
 
 
-def _build_report(scan_id, findings, results, use_llm):
+def _build_report(scan_id, findings_doc, results, use_llm):
     try:
-        from modules.reporting import build_report  # P3
-
-        rep = build_report(findings, use_llm)
-        report = (
-            rep.model_dump()
-            if hasattr(rep, 'model_dump')
-            else dict(rep)
-        )
-
+        report = build_report(findings_doc, use_llm)
     except Exception:
-        report = _fallback_report(scan_id, findings)
+        LOG.exception('Report generation failed for scan %s', scan_id)
+        report = _fallback_report(scan_id, findings_doc)
 
     report['scan_id'] = scan_id
 
@@ -341,22 +352,19 @@ def _run_scan(scan_id, project_path, modules, options):
 
     if scan_id in _CANCELLED:
         try:
-            findings = _correlate(results)
+            findings_doc = _correlate(results, scan_id)
             store.write_json(
                 scan_id,
                 'findings.json',
-                {
-                    'scan_id': scan_id,
-                    'findings': [_dump(f) for f in findings]
-                }
+                findings_doc
             )
             report = _build_report(
                 scan_id,
-                findings,
+                findings_doc,
                 results,
                 bool(options.get('use_llm'))
             )
-            report['overall_summary'] = f'Scan was cancelled. {len(findings)} partial finding(s) collected.'
+            report['overall_summary'] = f'Scan was cancelled. {len(findings_doc["findings"])} partial finding(s) collected.'
             store.write_json(scan_id, 'report.json', report)
             store.write_text(scan_id, 'report.html', _render_html(report))
         except Exception:
@@ -364,20 +372,17 @@ def _run_scan(scan_id, project_path, modules, options):
         return
 
     try:
-        findings = _correlate(results)
+        findings_doc = _correlate(results, scan_id)
 
         store.write_json(
             scan_id,
             'findings.json',
-            {
-                'scan_id': scan_id,
-                'findings': [_dump(f) for f in findings]
-            }
+            findings_doc
         )
 
         report = _build_report(
             scan_id,
-            findings,
+            findings_doc,
             results,
             bool(options.get('use_llm'))
         )
