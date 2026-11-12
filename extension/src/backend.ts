@@ -4,6 +4,9 @@ import * as crypto from 'crypto';
 import * as path from 'path';
 import { ApiError } from './api';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function isApiError(e: unknown): e is ApiError {
+  return e instanceof ApiError || (Boolean(e) && typeof (e as { status?: unknown }).status === 'number' && typeof (e as { message?: unknown }).message === 'string');
+}
 export class BackendManager implements vscode.Disposable {
   private child?: cp.ChildProcess;
   private childFailure?: string;
@@ -18,9 +21,9 @@ export class BackendManager implements vscode.Disposable {
   async ensure(health: () => Promise<unknown>): Promise<void> {
     try { await health(); this.out.appendLine('Backend health check passed.'); return; }
     catch (e) {
-      if (e instanceof ApiError && e.status < 0) throw new Error(e.message);
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw new Error('The backend rejected the token. Set buildguard.token to the same value as BUILDGUARD_TOKEN on the backend.');
-      if (e instanceof ApiError && e.status > 0) throw new Error(`BuildGuard backend responded with HTTP ${e.status}. Check its health endpoint and token.`);
+      if (isApiError(e) && e.status < 0) throw new Error(e.message);
+      if (isApiError(e) && (e.status === 401 || e.status === 403)) throw new Error('The backend rejected the token. Set buildguard.token to the same value as BUILDGUARD_TOKEN on the backend.');
+      if (isApiError(e) && e.status > 0) throw new Error(`BuildGuard backend responded with HTTP ${e.status}. Check its health endpoint and token.`);
     }
     const cfg = this.config();
     if (!cfg.autoStart || !cfg.cwd) throw new Error(`BuildGuard backend is not reachable at ${cfg.url}. Start it with "make run-backend" in the backend environment, or set buildguard.backendCwd to enable auto-start.`);
@@ -30,8 +33,8 @@ export class BackendManager implements vscode.Disposable {
       await sleep(500);
       try { await health(); return; }
       catch (e) {
-        if (e instanceof ApiError && (e.status === 401 || e.status === 403)) throw new Error('The started backend rejected its token. Review the BuildGuard output channel and token configuration.');
-        if (e instanceof ApiError && e.status > 0 && e.status !== 502 && e.status !== 503) throw new Error(`BuildGuard backend responded with HTTP ${e.status} while starting. Check the BuildGuard output channel.`);
+        if (isApiError(e) && (e.status === 401 || e.status === 403)) throw new Error('The started backend rejected its token. Review the BuildGuard output channel and token configuration.');
+        if (isApiError(e) && e.status > 0 && e.status !== 502 && e.status !== 503) throw new Error(`BuildGuard backend responded with HTTP ${e.status} while starting. Check the BuildGuard output channel.`);
         if (this.childFailure) throw new Error(`The BuildGuard backend failed during startup: ${this.childFailure}. See the BuildGuard output channel.`);
       }
     }

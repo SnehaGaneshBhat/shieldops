@@ -84,8 +84,9 @@ def health():
             'syft': bool(
                 shutil.which(os.environ.get('BUILDGUARD_SYFT_BIN', 'syft'))
             ),
-            'llm_configured': bool(
-                os.environ.get('BUILDGUARD_LLM_API_KEY')
+            'llm_configured': any(
+                os.environ.get(k, '').strip() not in ('', 'paste-your-key-here')
+                for k in ('GEMINI_API_KEY', 'BUILDGUARD_LLM_API_KEY')
             )
         }
     }

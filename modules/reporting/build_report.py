@@ -8,18 +8,25 @@ from .validate import InvalidExplanation, validate_response
 
 
 def _template_response(findings_doc):
-    return {"overall_summary": overall_summary(findings_doc),
-            "explanations": [{"finding_id": finding["id"], **explain(finding)}
-                             for finding in findings_doc.get("findings", [])]}
+    return {
+        "overall_summary": overall_summary(findings_doc),
+        "explanations": [
+            {"finding_id": finding["id"], **explain(finding)}
+            for finding in findings_doc.get("findings", [])
+        ],
+    }
 
 
-def build_report(findings_doc, use_llm=True):
+def build_report(findings_doc, use_llm=True, client=None):
     """Return a report dictionary. Deterministic templates are the default fallback."""
     response = _template_response(findings_doc)
     explanation_source = "template"
     if use_llm and llm_client.llm_configured():
         try:
-            raw = llm_client.cached_or_call(llm_client.build_user_message(findings_doc))
+            raw = llm_client.cached_or_call(
+                llm_client.build_user_message(findings_doc),
+                client=client,
+            )
             response = validate_response(json.loads(raw), findings_doc)
             explanation_source = "llm_validated"
         except (Exception, InvalidExplanation):
@@ -33,6 +40,7 @@ def build_report(findings_doc, use_llm=True):
         explanation = dict(explanation_by_id.get(finding["id"], explain(finding)))
         explanation.pop("finding_id", None)
         item.update(explanation)
+        item["explanation_source"] = explanation_source
         item["limitations"] = limitations(finding)
         item["simulation_notice"] = simulation_notice(finding)
         items.append(item)

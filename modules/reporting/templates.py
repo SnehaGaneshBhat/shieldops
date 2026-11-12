@@ -66,7 +66,7 @@ def explain(finding):
         data = next((e.get("data", {}) for e in finding.get("evidence", []) if e.get("type") == "osv_advisory"), {})
         ids = ", ".join(x for x in [data.get("id", "")] + data.get("aliases", []) if x)
         fixed = ", ".join(data.get("fixed_in", [])) or "not listed"
-        return {"plain_explanation": f"{subject.get('name')} {subject.get('version')} matches a published advisory ({ids}).",
+        return {"plain_explanation": f"{subject.get('name')} {subject.get('version')}: a published advisory exists ({ids}).",
                 "why_it_matters": "A published advisory means the issue is documented and may be exploitable in code that uses the affected version.",
                 "recommended_actions": [f"Move to a fixed version (listed: {fixed}) and scan again."]}
     if category == "SUSPICIOUS_INDICATOR":
@@ -102,7 +102,7 @@ def overall_summary(doc):
         parts.append("Items for review: " + ", ".join(f"{count} {label}" for label, count in counts.items()) + ".")
     else:
         parts.append("No known issues were detected by the checks that were performed.")
-    bad = [module for module, value in doc["module_status"].items() if value["status"] in ("error", "partial")]
+    bad = [module for module, value in doc.get("module_status", {}).items() if value.get("status") in ("error", "partial")]
     if bad:
         parts.append("These modules did not fully complete: " + ", ".join(bad) + ". Their results are incomplete.")
     if doc.get("simulation_present"):

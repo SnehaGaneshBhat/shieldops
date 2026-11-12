@@ -34,7 +34,7 @@ def run_lab(sample_dir, out_dir, project_cc="clang", opt_level="-O0", strip=Fals
             IMAGE, ["lab_run.sh"],
             mounts=[(str(sample_dir), "/work/sample", "ro"), (str(out_dir), "/out", "rw")],
             env={"PROJECT_CC": project_cc, "BG_OPT": opt_level, "BG_STRIP": "1" if strip else "0"},
-            network="none", timeout=timeout,
+            network_none=True, timeout=timeout,
         )
     except Exception as exc:
         raise LabError(getattr(exc, "code", "DOCKER_UNAVAILABLE"), getattr(exc, "message", str(exc)),

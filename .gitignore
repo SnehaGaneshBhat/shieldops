@@ -10,6 +10,7 @@ __pycache__/
 # Environment variables and secrets
 .env
 .env.*
+!.env.example
 
 # Generated SBOM files
 *.sbom
@@ -28,3 +29,9 @@ test_samples/*/dist/
 
 # Compiled demo binaries
 test_samples/deps_vuln_cpp/main
+
+# Generated VS Code extension build output
+extension/dist/
+
+# Packaged VS Code extension
+*.vsix
