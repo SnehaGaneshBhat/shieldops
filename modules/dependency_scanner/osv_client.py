@@ -258,6 +258,9 @@ def score_to_severity(score):
 
 
 def vuln_severity(vulnerability):
+    if "_merged_severity" in vulnerability:
+        return vulnerability["_merged_severity"]
+
     severity = str(
         (vulnerability.get("database_specific") or {}).get("severity", "")
     ).upper()
@@ -300,10 +303,18 @@ def vuln_severity(vulnerability):
     return "UNKNOWN"
 
 
-def fixed_versions(vulnerability):
+def fixed_versions(vulnerability, package_name=None):
+    if "_merged_fixed" in vulnerability:
+        return vulnerability["_merged_fixed"]
+
     output = []
 
     for affected in vulnerability.get("affected", []):
+        if package_name:
+            aff_pkg = (affected.get("package") or {}).get("name")
+            if aff_pkg and aff_pkg.lower() != package_name.lower():
+                continue
+
         for version_range in affected.get("ranges", []):
             for event in version_range.get("events", []):
                 fixed = event.get("fixed")
@@ -311,3 +322,236 @@ def fixed_versions(vulnerability):
                     output.append(fixed)
 
     return output
+
+
+class SemVer:
+    """Minimal SemVer 2.0.0 parser and comparator supporting prereleases and Go pseudo-versions."""
+    __slots__ = ("major", "minor", "patch", "prerelease", "build")
+
+    def __init__(self, major, minor, patch, prerelease=None, build=None):
+        self.major = major
+        self.minor = minor
+        self.patch = patch
+        self.prerelease = prerelease
+        self.build = build
+
+    @classmethod
+    def parse(cls, version_str):
+        if not version_str or not isinstance(version_str, str):
+            return None
+        import re
+        s = version_str.strip()
+        if s.startswith(("v", "V")):
+            s = s[1:]
+        elif s.lower().startswith("go"):
+            s = s[2:]
+
+        # Split build metadata
+        if "+" in s:
+            s, build = s.split("+", 1)
+        else:
+            build = None
+
+        # Split prerelease
+        if "-" in s:
+            core, pre = s.split("-", 1)
+        else:
+            core, pre = s, None
+
+        core_parts = core.split(".")
+        if len(core_parts) == 3:
+            if not all(p.isdigit() for p in core_parts):
+                return None
+            major, minor, patch = (int(p) for p in core_parts)
+        elif len(core_parts) == 2:
+            if not all(p.isdigit() for p in core_parts):
+                return None
+            major, minor = (int(p) for p in core_parts)
+            patch = 0
+        elif len(core_parts) == 1:
+            if not core_parts[0].isdigit():
+                return None
+            major = int(core_parts[0])
+            minor = patch = 0
+        else:
+            return None
+
+        parsed_pre = None
+        if pre is not None:
+            if not pre:
+                return None
+            raw_ids = pre.split(".")
+            parsed_ids = []
+            for raw_id in raw_ids:
+                if not raw_id:
+                    return None
+                if not re.match(r"^[0-9A-Za-z-]+$", raw_id):
+                    return None
+                if raw_id.isdigit():
+                    parsed_ids.append((0, int(raw_id)))
+                else:
+                    parsed_ids.append((1, raw_id))
+            parsed_pre = tuple(parsed_ids)
+
+        return cls(major, minor, patch, parsed_pre, build)
+
+    def _sort_key(self):
+        # In SemVer, release versions have higher precedence than prereleases:
+        # (1, ()) for normal release > (0, prerelease_tuple) for prerelease
+        pre_key = (1, ()) if self.prerelease is None else (0, self.prerelease)
+        return (self.major, self.minor, self.patch, pre_key)
+
+    def __eq__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() == other._sort_key()
+
+    def __ne__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() != other._sort_key()
+
+    def __lt__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() < other._sort_key()
+
+    def __le__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() <= other._sort_key()
+
+    def __gt__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() > other._sort_key()
+
+    def __ge__(self, other):
+        if not isinstance(other, SemVer):
+            return NotImplemented
+        return self._sort_key() >= other._sort_key()
+
+    def __repr__(self):
+        pre = f"-{'.'.join(str(p[1]) for p in self.prerelease)}" if self.prerelease else ""
+        build = f"+{self.build}" if self.build else ""
+        return f"SemVer({self.major}.{self.minor}.{self.patch}{pre}{build})"
+
+
+def is_version_affected(version_str, affected_entry):
+    """Return whether version_str is affected according to an OSV affected entry.
+
+    Returns:
+        True: confirmed affected within range or versions list.
+        False: confirmed unaffected.
+        None: indeterminate (unparseable, unsupported range, or missing data).
+    """
+    if not version_str or not isinstance(affected_entry, dict):
+        return None
+
+    # 1. Exact list of versions
+    specific_versions = affected_entry.get("versions")
+    if specific_versions and isinstance(specific_versions, list):
+        norm_v = str(version_str).strip()
+        norm_set = set()
+        for sv in specific_versions:
+            if isinstance(sv, str):
+                s = sv.strip()
+                norm_set.add(s)
+                if s.startswith(("v", "V")):
+                    norm_set.add(s[1:])
+                else:
+                    norm_set.add(f"v{s}")
+        if norm_v in norm_set:
+            return True
+        if not affected_entry.get("ranges"):
+            return False
+
+    v = SemVer.parse(str(version_str))
+    if v is None:
+        return None
+
+    ranges = affected_entry.get("ranges")
+    if not ranges or not isinstance(ranges, list):
+        return None
+
+    semver_ranges = [
+        r for r in ranges
+        if isinstance(r, dict) and r.get("type") in ("SEMVER", None, "")
+    ]
+    if not semver_ranges:
+        return None
+
+    has_indeterminate = False
+
+    for r in semver_ranges:
+        events = r.get("events")
+        if not events or not isinstance(events, list):
+            has_indeterminate = True
+            continue
+
+        current_introduced = None
+        range_had_error = False
+
+        for ev in events:
+            if not isinstance(ev, dict):
+                range_had_error = True
+                continue
+
+            if "introduced" in ev:
+                intro_raw = str(ev["introduced"]).strip()
+                if intro_raw == "0":
+                    current_introduced = "0"
+                else:
+                    intro_v = SemVer.parse(intro_raw)
+                    if intro_v is None:
+                        current_introduced = None
+                        range_had_error = True
+                    else:
+                        current_introduced = intro_v
+
+            elif "fixed" in ev:
+                fix_raw = str(ev["fixed"]).strip()
+                fix_v = SemVer.parse(fix_raw)
+                if fix_v is None or current_introduced is None:
+                    range_had_error = True
+                else:
+                    if current_introduced == "0":
+                        if v < fix_v:
+                            return True
+                    else:
+                        if current_introduced <= v < fix_v:
+                            return True
+                current_introduced = None
+
+            elif "last_affected" in ev:
+                last_raw = str(ev["last_affected"]).strip()
+                last_v = SemVer.parse(last_raw)
+                if last_v is None or current_introduced is None:
+                    range_had_error = True
+                else:
+                    if current_introduced == "0":
+                        if v <= last_v:
+                            return True
+                    else:
+                        if current_introduced <= v <= last_v:
+                            return True
+                current_introduced = None
+
+            elif "limit" in ev:
+                current_introduced = None
+            else:
+                range_had_error = True
+
+        if current_introduced is not None:
+            if current_introduced == "0":
+                return True
+            elif current_introduced <= v:
+                return True
+
+        if range_had_error:
+            has_indeterminate = True
+
+    if has_indeterminate:
+        return None
+
+    return False

@@ -29,11 +29,16 @@ def typosquat(name, top):
         return alternate, 0
 
     for trusted in top:
-        if abs(len(trusted) - len(name)) > 2:
+        trusted_lower = trusted.lower()
+        if abs(len(trusted_lower) - len(name)) > 2:
             continue
 
-        distance = DamerauLevenshtein.distance(name, trusted)
-        limit = 1 if len(trusted) <= 4 else 2
+        min_len = min(len(name), len(trusted_lower))
+        if min_len <= 3:
+            continue
+
+        limit = 1 if min_len <= 4 else 2
+        distance = DamerauLevenshtein.distance(name, trusted_lower)
 
         if 1 <= distance <= limit:
             return trusted, distance

@@ -63,9 +63,19 @@ def explain(finding):
     category, subject = finding["category"], finding.get("subject", {})
     why = "; ".join(RULE_TEXT.get(rule, rule) for rule in _rules(finding))
     if category in ("KNOWN_VULNERABILITY", "KNOWN_MALICIOUS_ADVISORY"):
-        data = next((e.get("data", {}) for e in finding.get("evidence", []) if e.get("type") == "osv_advisory"), {})
-        ids = ", ".join(x for x in [data.get("id", "")] + data.get("aliases", []) if x)
-        fixed = ", ".join(data.get("fixed_in", [])) or "not listed"
+        all_fixed = []
+        all_ids = []
+        for e in finding.get("evidence", []):
+            if e.get("type") == "osv_advisory":
+                d = e.get("data", {})
+                for vid in [d.get("id", "")] + (d.get("aliases") or []):
+                    if vid and vid not in all_ids:
+                        all_ids.append(vid)
+                for fv in (d.get("fixed_in") or []):
+                    if fv and fv not in all_fixed:
+                        all_fixed.append(fv)
+        ids = ", ".join(all_ids) if all_ids else "not listed"
+        fixed = ", ".join(all_fixed) or "not listed"
         return {"plain_explanation": f"{subject.get('name')} {subject.get('version')}: a published advisory exists ({ids}).",
                 "why_it_matters": "A published advisory means the issue is documented and may be exploitable in code that uses the affected version.",
                 "recommended_actions": [f"Move to a fixed version (listed: {fixed}) and scan again."]}

@@ -200,6 +200,10 @@ def run(sample_path, options=None):
     out_dir = Path(options.get("out_dir") or tempfile.mkdtemp(prefix="bg_compiler_")).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
+        out_dir.chmod(0o777)
+    except OSError:
+        pass
+    try:
         lab_adapter.run_lab(sample, out_dir, project_cc, opt_level=opt, strip=strip,
                             timeout=options.get("timeout", 180))
     except lab_adapter.LabError as e:

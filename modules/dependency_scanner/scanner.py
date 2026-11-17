@@ -10,21 +10,124 @@ from .discover import discover, find_line
 from .installer import install_all
 from .lockfiles import Pkg, norm_pypi, parse_npm_lock, parse_package_json, parse_requirements
 from .models import Evidence, Finding, ModuleResult
-from .osv_client import OSVClient, OSVError, fixed_versions, vuln_severity
+from .osv_client import OSVClient, OSVError, fixed_versions, is_version_affected, vuln_severity
 from .registry import fetch_age, load_meta
 from .syft_runner import ECOSYSTEMS, SyftError, parse_cyclonedx, run_syft
 
 
 ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
+LOCKFILE_NAMES = {
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+}
+
+
+def is_lockfile_manifest(manifest_path):
+    return bool(manifest_path and Path(manifest_path).name in LOCKFILE_NAMES)
 MANIFEST_HINTS = {
     "npm": ["package.json", "package-lock.json", "yarn.lock"],
     "pypi": ["requirements.txt", "Pipfile.lock", "poetry.lock"],
     "golang": ["go.mod", "go.sum"],
+    "go": ["go.mod", "go.sum"],
+    "nuget": ["packages.config", "*.csproj", "packages.lock.json"],
     "cargo": ["Cargo.toml", "Cargo.lock"],
     "maven": ["pom.xml"],
     "vcpkg": ["vcpkg.json", "vcpkg-configuration.json"],
     "conan": ["conanfile.txt", "conan.lock"],
 }
+
+
+def deduplicate_advisories(advisories, package_name=None):
+    """Group OSV advisories that share common aliases or CVEs under a primary advisory."""
+    if not advisories:
+        return []
+
+    n = len(advisories)
+    parent = list(range(n))
+
+    def find(i):
+        if parent[i] == i:
+            return i
+        parent[i] = find(parent[i])
+        return parent[i]
+
+    def union(i, j):
+        root_i = find(i)
+        root_j = find(j)
+        if root_i != root_j:
+            parent[root_i] = root_j
+
+    id_sets = []
+    for adv in advisories:
+        ids = {adv.get("id")} if adv.get("id") else set()
+        ids.update(adv.get("aliases") or [])
+        id_sets.append({i for i in ids if i})
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if id_sets[i] & id_sets[j]:
+                union(i, j)
+
+    clusters = {}
+    for i in range(n):
+        root = find(i)
+        clusters.setdefault(root, []).append(advisories[i])
+
+    def id_priority(vuln_id):
+        v = str(vuln_id)
+        if v.startswith("GHSA-"):
+            return 0
+        if v.startswith("CVE-"):
+            return 1
+        if v.startswith("GO-"):
+            return 2
+        if v.startswith("RUSTSEC-"):
+            return 3
+        return 4
+
+    merged = []
+    for cluster in clusters.values():
+        if len(cluster) == 1:
+            merged.append(cluster[0])
+            continue
+
+        primary = min(cluster, key=lambda a: id_priority(a.get("id", "")))
+        primary_id = primary.get("id")
+
+        all_ids = set()
+        summaries = []
+        all_fixed = []
+        severities = []
+
+        for adv in cluster:
+            if adv.get("id"):
+                all_ids.add(adv["id"])
+            all_ids.update(adv.get("aliases") or [])
+            s = adv.get("summary")
+            if s:
+                summaries.append(s)
+            for f in fixed_versions(adv, package_name):
+                if f not in all_fixed:
+                    all_fixed.append(f)
+            sev = vuln_severity(adv)
+            if sev in ORDER:
+                severities.append(sev)
+
+        best_summary = max(summaries, key=len) if summaries else primary.get("summary", "")
+        best_sev = min(severities, key=ORDER.index) if severities else vuln_severity(primary)
+        aliases = sorted(list(all_ids - {primary_id, ""}))
+
+        consolidated = dict(primary)
+        consolidated["id"] = primary_id
+        consolidated["aliases"] = aliases
+        consolidated["summary"] = best_summary
+        consolidated["_merged_fixed"] = all_fixed
+        consolidated["_merged_severity"] = best_sev
+        merged.append(consolidated)
+
+    return merged
 
 
 def _find_data_file(filename):
@@ -277,7 +380,8 @@ def _run(project_path, options):
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             sbom_temp = str(Path(temp_dir) / "sbom.json")
-            run_syft(str(root), sbom_temp)
+            syft_timeout = options.get("syft_timeout")
+            run_syft(str(root), sbom_temp, timeout=syft_timeout)
             components, versions["syft"] = parse_cyclonedx(sbom_temp)
             if sbom_out:
                 try:
@@ -353,19 +457,42 @@ def _run(project_path, options):
             print()
 
     # 2. Explicit manifest and lockfile parsing adds integrity, source, and complete dependency coverage.
-    for manifest in manifests:
+    # Parse lockfiles before manifest files so resolved/integrity-pinned packages take precedence.
+    manifest_priority = {
+        "package-lock.json": 0,
+        "npm-shrinkwrap.json": 0,
+        "yarn.lock": 0,
+        "pnpm-lock.yaml": 0,
+        "requirements.txt": 1,
+        "package.json": 2,
+    }
+    sorted_manifests = sorted(manifests, key=lambda m: manifest_priority.get(m.name, 10))
+    locked_by_dir = {}
+
+    for manifest in sorted_manifests:
         parsed = []
 
         if manifest.name == "package-lock.json":
             parsed = parse_npm_lock(manifest)
             if "npm_lockfile_parse" not in checks:
                 checks.append("npm_lockfile_parse")
+            locked_by_dir[manifest.parent] = {pkg.name for pkg in parsed}
 
         elif manifest.name == "package.json":
             try:
                 parsed = parse_package_json(manifest)
                 if "package_json_parse" not in checks:
                     checks.append("package_json_parse")
+                locked_names = set()
+                curr = manifest.parent
+                while True:
+                    if curr in locked_by_dir:
+                        locked_names.update(locked_by_dir[curr])
+                    if curr == root or curr.parent == curr:
+                        break
+                    curr = curr.parent
+                if locked_names:
+                    parsed = [pkg for pkg in parsed if pkg.name not in locked_names]
             except ValueError as exc:
                 errors.append({
                     "code": "MALFORMED_MANIFEST",
@@ -465,9 +592,11 @@ def _run(project_path, options):
         if pkg.eco not in ECOSYSTEMS:
             add(
                 "UNRESOLVED", "INFO", "LOW", pkg,
-                f"{pkg.name}: ecosystem not supported",
+                f"{pkg.name}: ecosystem '{pkg.eco}' not supported for vulnerability scanning",
                 [Evidence(type="tool_output", data={
-                    "reason": "unsupported_ecosystem"
+                    "reason": "unsupported_ecosystem",
+                    "ecosystem": pkg.eco,
+                    "detail": f"Dependencies in ecosystem '{pkg.eco}' are not currently supported by OSV vulnerability lookup.",
                 })],
             )
         elif not pkg.version:
@@ -490,7 +619,11 @@ def _run(project_path, options):
 
     # Local file dependencies are part of the project, not published
     # registry packages. Keep them for heuristics, but do not query OSV.
-    osv_eligible = [pkg for pkg in resolved if pkg.source != "local"]
+    osv_eligible = [
+        pkg for pkg in packages.values()
+        if pkg.eco in ECOSYSTEMS
+        and pkg.source != "local"
+    ]
 
     osv_packages = [
         (ECOSYSTEMS[pkg.eco], pkg.name, pkg.version)
@@ -533,28 +666,91 @@ def _run(project_path, options):
         key = (ECOSYSTEMS[pkg.eco], pkg.name, pkg.version)
 
         if key in failed:
+            pkg_str = f"{pkg.name}@{pkg.version}" if pkg.version else pkg.name
             add(
                 "UNRESOLVED", "INFO", "LOW", pkg,
-                f"{pkg.name}@{pkg.version}: OSV lookup failed",
+                f"{pkg_str}: OSV lookup failed",
                 [Evidence(type="tool_output", data={
                     "reason": "osv_unreachable"
                 })],
             )
             continue
 
-        advisories = []
+        confirmed_advisories = []
+        indeterminate_advisories = []
+
         for vuln_id in ids_by_package.get(key, []):
             try:
-                advisories.append(osv.get_vuln(vuln_id))
+                vuln_obj = osv.get_vuln(vuln_id)
             except OSVError:
-                advisories.append({"id": vuln_id})
+                indeterminate_advisories.append({
+                    "id": vuln_id,
+                    "summary": f"Could not retrieve OSV advisory details for {vuln_id}",
+                })
+                continue
+
+            all_affected = vuln_obj.get("affected")
+            if not all_affected:
+                if pkg.version:
+                    confirmed_advisories.append(vuln_obj)
+                else:
+                    indeterminate_advisories.append(vuln_obj)
+                continue
+
+            named_packages = [
+                (aff.get("package") or {}).get("name", "").strip()
+                for aff in all_affected
+                if isinstance(aff, dict) and (aff.get("package") or {}).get("name")
+            ]
+            if named_packages and not any(p.lower() == pkg.name.lower() for p in named_packages):
+                # Named affected packages present, but none match this package
+                continue
+
+            matching_aff = [
+                aff for aff in all_affected
+                if isinstance(aff, dict) and (
+                    not (aff.get("package") or {}).get("name")
+                    or (aff.get("package") or {}).get("name", "").lower() == pkg.name.lower()
+                )
+            ]
+
+            if not matching_aff:
+                if not pkg.version:
+                    indeterminate_advisories.append(vuln_obj)
+                continue
+
+            eval_results = [
+                is_version_affected(pkg.version, aff)
+                for aff in matching_aff
+            ]
+
+            if any(res is True for res in eval_results):
+                confirmed_advisories.append(vuln_obj)
+            elif all(res is False for res in eval_results):
+                continue
+            else:
+                indeterminate_advisories.append(vuln_obj)
+
+        confirmed_advisories = deduplicate_advisories(confirmed_advisories, pkg.name)
+
+        confirmed_ids = set()
+        for adv in confirmed_advisories:
+            if adv.get("id"):
+                confirmed_ids.add(adv["id"])
+            confirmed_ids.update(adv.get("aliases") or [])
+
+        indeterminate_advisories = [
+            adv for adv in indeterminate_advisories
+            if not ({adv.get("id")} | set(adv.get("aliases") or [])) & confirmed_ids
+        ]
+        indeterminate_advisories = deduplicate_advisories(indeterminate_advisories, pkg.name)
 
         malicious = [
-            item for item in advisories
+            item for item in confirmed_advisories
             if str(item.get("id", "")).startswith("MAL-")
         ]
         vulnerabilities = [
-            item for item in advisories if item not in malicious
+            item for item in confirmed_advisories if item not in malicious
         ]
 
         for group, category in (
@@ -569,7 +765,7 @@ def _run(project_path, options):
                     "id": item.get("id"),
                     "aliases": item.get("aliases", []),
                     "summary": H.clean(item.get("summary", "")),
-                    "fixed_in": fixed_versions(item),
+                    "fixed_in": fixed_versions(item, pkg.name),
                     "severity": vuln_severity(item),
                 })
                 for item in group
@@ -584,9 +780,35 @@ def _run(project_path, options):
                 )
             )
 
+            pkg_str = f"{pkg.name} {pkg.version}" if pkg.version else pkg.name
             add(
                 category, severity, "CONFIRMED", pkg,
-                f"{pkg.name} {pkg.version}: {len(group)} OSV advisory record(s)",
+                f"{pkg_str}: {len(group)} OSV advisory record(s)",
+                evidence,
+            )
+
+        if indeterminate_advisories:
+            detail_msg = (
+                "Installed version is unavailable and version-specific vulnerability verification could not be performed"
+                if not pkg.version
+                else "Could not determine if version is affected due to unparseable or unsupported range format"
+            )
+            evidence = [
+                Evidence(type="osv_advisory", data={
+                    "id": item.get("id"),
+                    "aliases": item.get("aliases", []),
+                    "summary": H.clean(item.get("summary", "")),
+                    "fixed_in": fixed_versions(item, pkg.name),
+                    "severity": vuln_severity(item),
+                    "reason": "version_comparison_unknown",
+                    "detail": detail_msg,
+                })
+                for item in indeterminate_advisories
+            ]
+            pkg_str = f"{pkg.name}@{pkg.version}" if pkg.version else pkg.name
+            add(
+                "UNRESOLVED", "INFO", "LOW", pkg,
+                f"{pkg_str}: {len(indeterminate_advisories)} OSV advisory record(s) with indeterminate version comparison",
                 evidence,
             )
 
@@ -606,13 +828,13 @@ def _run(project_path, options):
             "code": "DATA_MISSING",
             "message": "Top packages data file not found",
         })
-    top = (npm_top or set()) | (pypi_top or set())
     budget = options.get("max_registry_lookups", 100)
 
     for pkg in packages.values():
         hits = []
 
-        typo = H.typosquat(pkg.name, top) if top else None
+        eco_top = npm_top if pkg.eco == "npm" else (pypi_top if pkg.eco == "pypi" else None)
+        typo = H.typosquat(pkg.name, eco_top) if eco_top else None
         if typo:
             hits.append(Evidence(
                 type="rule_hit",
@@ -629,9 +851,9 @@ def _run(project_path, options):
             ))
 
         if (
-            pkg.eco == "npm"
+            (pkg.eco or "").lower() == "npm"
             and pkg.source in ("registry", "url")
-            and pkg.manifest
+            and is_lockfile_manifest(pkg.manifest)
             and not pkg.integrity
         ):
             hits.append(Evidence(

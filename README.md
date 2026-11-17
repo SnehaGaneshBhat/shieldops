@@ -41,23 +41,32 @@ BuildGuard consists of three core analysis modules, a correlation and reporting 
   - JavaScript / Node: `package.json`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
   - Python: `requirements.txt`, `Pipfile.lock`, `poetry.lock`
   - Go: `go.mod`, `go.sum`
-  - Rust: `Cargo.lock`
+  - Rust: `Cargo.lock`, `Cargo.toml`
   - Java: `pom.xml`
   - C / C++: `vcpkg.json`, `vcpkg-configuration.json`, `conanfile.txt`, `conan.lock`
-- **Advisory Lookup:** Queries the Open Source Vulnerabilities (OSV) database for known CVEs and security advisories, caching results locally in `.buildguard/cache/osv/`.
-- **Heuristic Indicators:** Evaluates package metadata for suspicious install scripts, typo-squatting, and unpinned repository commits.
+  - .NET / NuGet: `packages.config`, `*.csproj`, `packages.lock.json`
+- **Advisory Lookup & Caching:** Queries the Open Source Vulnerabilities (OSV) database for known CVEs and security advisories, caching results locally in `.buildguard/cache/osv/`.
+  - In offline mode (`offline=True`), cached queries and advisories are used. Versionless packages participate in cache lookups: cache hits report `UNRESOLVED` (`version_comparison_unknown`) explaining that the installed version is unavailable, and cache misses report `UNRESOLVED` (`osv_unreachable`) rather than silently skipping the package.
+- **Heuristic Indicators:** Evaluates package metadata and manifest declarations:
+  - `TYPOSQUAT`: Levenshtein distance check against top packages with strict ecosystem isolation (npm vs. PyPI).
+  - `INSTALL_SCRIPT`: Detects npm lifecycle scripts (`preinstall`, `install`, `postinstall`).
+  - `MISSING_INTEGRITY`: Flags npm dependencies lacking SHA integrity hashes in lockfile manifests (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`).
+  - `NONREGISTRY_SOURCE`: Flags dependencies sourced from git repositories or direct URLs instead of verified registries.
+  - `NEW_OR_THIN_PACKAGE`: Flags packages published within 30 days or having only a single release version.
 - **SBOM Generation:** Invokes Syft when installed to generate a CycloneDX Software Bill of Materials.
 - **Docker Requirement:** Runs entirely **without Docker**.
 
 ### 2. Build Integrity Verification (`modules/build_integrity`)
 - **Reproducible Rebuilds (Docker Required):** Executes independent, dual builds inside a pinned, network-isolated container (`--network none`) and compares output cryptographic hashes (SHA-256).
-- **Pinned Recipes:** Enforces build recipes (e.g. `buildguard.yml`) with container images pinned by immutable digests (`@sha256:...`) and outputs constrained to `out/`.
-- **Release Manifest Verification (No Docker Required):** Verifies distributed release artifacts against trusted cryptographic manifests (`manifest.json`), operating standalone without Docker when container rebuilds are not requested.
+- **Pinned Recipes & Target Resolution:** Enforces build recipes (e.g. `buildguard.yml`) with container images pinned by immutable digests (`@sha256:...`) and outputs constrained to `out/`.
+  - Target resolution checks the workspace root for `buildguard.yml`. If absent, it checks an explicitly configured sample directory (e.g., `test_samples/compiler_hello`). If neither contains the recipe, it retains the workspace root and reports `NOT_COMPARABLE` (`recipe not found`). External workspaces never substitute bundled samples.
+- **Release Manifest Verification (No Docker Required):** Verifies distributed release artifacts against trusted cryptographic manifests (`manifest.json` or `release_manifest.json`), operating standalone without Docker when container rebuilds are not requested.
 - **Diagnostic Inspection:** Detects byte flips, size differences, and timestamp anomalies when builds diverge.
 
 ### 3. Compiler Anomaly Analysis (`modules/compiler_analysis`)
 - **Scope:** Strictly limited to supported C source code (`src/**/*.c`) and compiled Linux ELF binaries (`app`) against a reference GCC build. C++, non-ELF binary formats, and other architectures are outside the supported scope.
 - **Recursive Source Discovery:** Discovers all nested C translation units (`find "$SRC" -type f -name "*.c"`) using null-delimited processing, safely handling filenames and directory paths containing whitespace.
+- **Target Resolution:** Scans the user workspace if `src/` contains `.c` source files; otherwise safely resolves an explicitly configured `compiler_sample` (e.g., `test_samples/compiler_hello`).
 - **Compiler Lab (Docker Required for Live Builds):** Orchestrates compilation and reference analysis in an isolated container environment (`docker/compiler-lab`).
 - **Trusted Compiler Path Validation:** Validates container compiler IDs (`clang`, `gcc`) and verifies executable paths reside strictly in approved container system directories (`/usr/bin`, `/usr/local/bin`, `/bin`).
 - **Exact Simulated-Wrapper Recognition:** Enforces exact configuration matching for authorized simulated compiler compromise wrapper scripts, rejecting arbitrary commands or loose substring spoofs.
@@ -67,13 +76,13 @@ BuildGuard consists of three core analysis modules, a correlation and reporting 
 
 ### 4. Correlation, Reporting & Gemini Integration (`modules/reporting`)
 - **Unified Findings Schema:** Combines module outputs into standardized categories:
-  - `DEPENDENCY_VULNERABILITY`
-  - `SUSPICIOUS_PACKAGE`
-  - `BUILD_ANOMALY`
-  - `COMPILER_ANOMALY`
-  - `POLICY_VIOLATION`
-  - `UNRESOLVED`
-  - `NO_KNOWN_ISSUES`
+  - `KNOWN_VULNERABILITY`: Exact match against published security advisories for the resolved package version.
+  - `KNOWN_MALICIOUS_ADVISORY`: Published malicious package record (e.g., `MAL-*`).
+  - `SUSPICIOUS_INDICATOR`: Heuristic security flags (typosquatting, lifecycle scripts, missing lockfile integrity, non-registry source, new package).
+  - `BUILD_MISMATCH`: Cryptographic hash divergence between independent reproducible rebuilds or release manifests.
+  - `COMPILER_ANOMALY`: Discrepancy between C source symbols and compiled binary artifacts (injected functions, missing source functions, risky dynamic imports).
+  - `UNRESOLVED`: Incomplete check (e.g., versionless package, offline cache miss, unsupported ecosystem, missing tools, parsing error).
+  - `NO_KNOWN_ISSUES`: Informational finding indicating all requested checks completed cleanly with zero findings detected.
 - **AI-Assisted Explanations:** Optionally queries Google Gemini API to generate contextual summaries and remediation guidance.
 - **Robust Fallback:** Uses deterministic templated explanations if the Gemini API key is unconfigured, unreachable, or disabled (`buildguard.useLLM: false`).
 - **Local LLM Cache:** Caches responses in `.buildguard/cache/llm/` (bypassable via `BUILDGUARD_NO_CACHE=1`).
@@ -115,17 +124,26 @@ If the Docker daemon is down or unreachable, the backend catches the failure, re
 
 ## Prerequisites and System Requirements
 
-- **Operating System:** Linux or macOS (Windows supported via PowerShell).
-- **Python:** Python 3.12 (`python3.12` and `python3.12-venv`).
-- **Node.js:** Node.js major version 20 or later (v20, v22+) and `npm`.
-- **Git:** Required for versioning and environment checks.
-- **Docker:** Required for reproducible container builds (P2) and compiler lab execution (P3). Optional for dependency scanning and demo reports.
-- **Syft:** Optional; required on `PATH` for CycloneDX SBOM generation in P1.
-- **VS Code:** Version 1.85 or newer for the extension.
+Prerequisites differ depending on whether you are using the packaged extension or contributing to the codebase:
+
+### For VS Code End Users (Using the Packaged Extension)
+- **Operating System:** Linux, macOS, or Windows.
+- **VS Code:** Version 1.85 or newer.
+- **Python 3.12:** Required if running the BuildGuard backend locally (`python3.12` and `python3.12-venv`).
+- **Docker (Optional):** Required only if running containerized reproducible rebuilds (P2) or live compiler-lab anomaly checks (P3). Not needed for dependency scanning, standalone release manifest verification, or demo reports.
+- **Syft (Optional):** Standalone `syft` CLI on `PATH` for CycloneDX SBOM generation in P1.
+- *Note:* Node.js, npm, Git, and source build tools are **not** required for users who receive and install the pre-packaged `.vsix` extension file.
+
+### For Extension Developers and Contributors
+- **Node.js & npm:** Node.js major version 20 or later (v20, v22+) and `npm` (required for extension bundling, linting, packaging, and tests).
+- **Git:** Required for source checkout, versioning, and environment checks.
+- **Python 3.12:** Python virtual environment with backend dependencies (`make venv`).
+- **Docker:** Running Docker daemon for container rebuild and compiler lab testing (`make test-docker`).
+- **Extension Development Host:** VS Code for live extension debugging (`F5`).
 
 ### Environment Check
 
-Verify your local environment with the included check script:
+Contributors can verify their local development environment with the included check script:
 
 ```sh
 bash scripts/check_env.sh
@@ -136,6 +154,86 @@ Or via Makefile:
 ```sh
 make setup
 ```
+
+---
+
+## Using BuildGuard as a VS Code User
+
+This section covers the standard workflow for installing and using BuildGuard in VS Code without requiring the Extension Development Host or developer tools.
+
+### 1. Install the Packaged Extension
+
+BuildGuard is packaged as a standard VS Code extension package (`.vsix`):
+
+1. **Generate or Obtain the Package:**
+   If building from the repository, package the extension artifact:
+   ```sh
+   npm --prefix extension run package
+   ```
+   This generates `buildguard-0.1.0.vsix` in the repository root.
+
+2. **Install into VS Code:**
+   - **Via VS Code UI:** Open the **Extensions** view (`Ctrl+Shift+X` / `Cmd+Shift+X`), click the **Views and More Actions** (`...`) menu at the top-right of the Extensions pane, select **Install from VSIX...**, and choose `buildguard-0.1.0.vsix`.
+   - **Via Command Palette:** Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`), run `Extensions: Install from VSIX...`, and select the file.
+   - **Via Terminal / CLI:** Run:
+     ```sh
+     code --install-extension buildguard-0.1.0.vsix
+     ```
+
+> [!NOTE]
+> Installing a packaged `.vsix` does **not** require Node.js, npm, Git, or an active extension source checkout on the user's machine. The extension runs directly inside standard VS Code.
+
+### 2. Start and Configure the Backend
+
+The BuildGuard extension communicates with a local backend service to perform live scans. The `.vsix` package provides the editor interface, diagnostics, and report views, but does not bundle or automatically install Python dependencies or the backend service.
+
+1. **Start the Backend:**
+   Ensure the Python environment is set up (see [Backend Setup and Startup](#backend-setup-and-startup)), then launch the backend service:
+   ```sh
+   # Start with a shared development token
+   make run-backend TOKEN=dev-token
+
+   # Or manually:
+   BUILDGUARD_TOKEN=dev-token .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8787
+   ```
+
+2. **Configure Extension Settings:**
+   In VS Code, open Settings (`Ctrl+,` / `Cmd+,` or **File > Preferences > Settings**), search for `buildguard`, or configure in your user or workspace `settings.json`:
+
+   ```json
+   {
+     "buildguard.backendUrl": "http://127.0.0.1:8787",
+     "buildguard.token": "dev-token"
+   }
+   ```
+
+   **Core Extension Settings:**
+   | Setting | Type | Default | Description |
+   | :--- | :--- | :--- | :--- |
+   | `buildguard.backendUrl` | `string` | `"http://127.0.0.1:8787"` | URL of the running BuildGuard backend service. |
+   | `buildguard.token` | `string` | `""` | Shared secret token matching `BUILDGUARD_TOKEN` passed to the backend. |
+   | `buildguard.modules` | `array` | `["dependency", "build", "compiler"]` | Analysis modules to execute during scans. |
+   | `buildguard.useLLM` | `boolean` | `true` | Generate AI explanations via Gemini (falls back to deterministic templates). |
+   | `buildguard.autoStartBackend` | `boolean` | `true` | Automatically starts the backend if stopped (requires `backendCwd`). |
+   | `buildguard.backendCwd` | `string` | `""` | Absolute repository path containing `.venv` and `backend/` for auto-start. |
+   | `buildguard.compilerSample` | `string` | `"test_samples/compiler_hello"` | Sample path relative to workspace for compiler demo evaluation. |
+
+### 3. Run a Scan and Inspect Results
+
+1. **Open a Project Folder:** Open the workspace or project directory you want to inspect in VS Code (**File > Open Folder...**).
+2. **Execute a Workspace Scan:**
+   - Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`).
+   - Run **BuildGuard: Scan Workspace** (`buildguard.scan`).
+   - BuildGuard initiates the scan against the backend across selected modules (`dependency`, `build`, `compiler`).
+3. **Inspect Diagnostics in Problems Panel:**
+   - Supported dependency and manifest issues appear directly in the VS Code **Problems** panel (`Ctrl+Shift+M` / `Cmd+Shift+M`) with direct file and line references.
+   - To clear these diagnostics, run **BuildGuard: Clear Problems** (`buildguard.clearDiagnostics`).
+4. **View and Export Findings:**
+   - **Show Interactive Report:** Run **BuildGuard: Show Last Report** (`buildguard.showReport`) to display findings, severity levels, confidence, and remediation actions in an interactive Webview.
+   - **Export HTML Report:** Run **BuildGuard: Export Report as HTML** (`buildguard.exportHtml`) to generate a standalone HTML document secured with a strict Content Security Policy.
+5. **Backend-Free Preview (Demo Report):**
+   - Run **BuildGuard: Show Demo Report (No Backend)** (`buildguard.showDemoReport`) from the Command Palette to preview the report UI using bundled static fictional data.
+   - *Note:* The demo report requires no backend and does not scan workspace files; live analysis of your project always requires a running backend.
 
 ---
 
@@ -169,6 +267,7 @@ Supported environment variables:
 | :--- | :--- | :--- |
 | `BUILDGUARD_TOKEN` | Shared secret for backend API authentication (`X-BuildGuard-Token`) | Auto-generated or `TOKEN=dev-token` |
 | `BUILDGUARD_WORKSPACE_ROOT` | Restricts scans to paths within this directory | None (allows any valid local path) |
+| `BUILDGUARD_DATA_DIR` | Custom path to heuristics package data directory (or `SHIELDOPS_DATA_DIR`) | Bundled data directory |
 | `GEMINI_API_KEY` | Google Gemini API key for generated explanations | `paste-your-key-here` |
 | `GEMINI_MODEL` | Google Gemini model identifier | `gemini-2.5-flash` |
 | `BUILDGUARD_LLM_API_KEY` | Legacy fallback for Gemini API key | None |
@@ -192,10 +291,16 @@ make run-backend TOKEN=dev-token
 BUILDGUARD_TOKEN=dev-token .venv/bin/python -m uvicorn backend.main:app --host 127.0.0.1 --port 8787
 ```
 
-- **Health check endpoint:** `http://127.0.0.1:8787/v1/health` (open)
-- **Scan initiation:** `POST http://127.0.0.1:8787/v1/scans` (requires `X-BuildGuard-Token: dev-token`)
-- **Scan status:** `GET http://127.0.0.1:8787/v1/scans/{scan_id}` (requires `X-BuildGuard-Token: dev-token`)
-- **Report retrieval:** `GET http://127.0.0.1:8787/v1/scans/{scan_id}/report` (requires `X-BuildGuard-Token: dev-token`)
+Supported REST API endpoints:
+- `GET http://127.0.0.1:8787/v1/health` (open) — Service status, version, and tool availability (Docker, Syft, LLM configuration).
+- `POST http://127.0.0.1:8787/v1/scans` (auth) — Starts a workspace scan across requested modules (`dependency`, `build`, `compiler`).
+- `GET http://127.0.0.1:8787/v1/scans/{scan_id}` (auth) — Polls scan state (`queued`, `running`, `completed`, `failed`, `cancelled`) and module-level progress.
+- `GET http://127.0.0.1:8787/v1/scans/{scan_id}/findings` (auth) — Retrieves raw structured findings array.
+- `GET http://127.0.0.1:8787/v1/scans/{scan_id}/report` (auth) — Retrieves the correlated JSON report with synthesized explanations.
+- `GET http://127.0.0.1:8787/v1/scans/{scan_id}/report.html` (auth) — Retrieves the rendered standalone HTML report.
+- `POST http://127.0.0.1:8787/v1/scans/{scan_id}/cancel` (auth) — Cancels an in-progress scan.
+- `POST http://127.0.0.1:8787/v1/release-manifests` (auth) — Builds the trusted release artifact into `dist/` and writes `release_manifest.json`.
+- `POST http://127.0.0.1:8787/v1/verify-artifact` (auth) — Verifies a distributed artifact against a cryptographic release manifest (no Docker needed).
 
 For extension preview without running scans, a lightweight mock server is also available:
 
@@ -205,9 +310,27 @@ make run-mock
 .venv/bin/python -m uvicorn backend.mock_server:app --host 127.0.0.1 --port 8787
 ```
 
+### 4. Standalone Module CLI Execution
+
+Each core analysis module can be invoked directly from the command line:
+
+```sh
+# Dependency Scanner (P1)
+.venv/bin/python -m modules.dependency_scanner <project_path> [--offline] [--cache-dir <dir>] [--out <file>] [--sbom <file>] [-v]
+
+# Build Integrity Verification (P2)
+.venv/bin/python -m modules.build_integrity <project_path> [--recipe buildguard.yml] [--release] [--manifest <file>] [--distributed <file>] [--verify-only]
+
+# Compiler Anomaly Analysis (P3)
+.venv/bin/python -m modules.compiler_analysis <sample_path> [--project-cc <cmd>] [--out-dir <dir>] [--opt-level -O0] [--strip]
+```
+
 ---
 
-## Extension Build and Launch
+## Extension Development Workflow (Contributors)
+
+> [!NOTE]
+> This section is intended for contributors modifying, building, or debugging the extension source code using the Extension Development Host. Ordinary users should follow the packaged extension workflow in [Using BuildGuard as a VS Code User](#using-buildguard-as-a-vs-code-user).
 
 From the repository root:
 
@@ -286,15 +409,20 @@ In VS Code, open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`) and run:
 - **No backend service needed:** Operates completely offline without connecting to the REST API.
 - **No Docker needed:** Does not build or run any Docker containers.
 - **Does not scan project files:** Uses static, bundled fictional fixture data from `extension/media/demo-report.json`.
-- **Full visual preview:** Renders findings across all 7 categories (`DEPENDENCY_VULNERABILITY`, `BUILD_ANOMALY`, `COMPILER_ANOMALY`, `SUSPICIOUS_PACKAGE`, `POLICY_VIOLATION`, `UNRESOLVED`, and `NO_KNOWN_ISSUES`).
+- **Full visual preview:** Renders findings across all 7 categories (`KNOWN_VULNERABILITY`, `KNOWN_MALICIOUS_ADVISORY`, `SUSPICIOUS_INDICATOR`, `BUILD_MISMATCH`, `COMPILER_ANOMALY`, `UNRESOLVED`, and `NO_KNOWN_ISSUES`).
 - **HTML export preview:** You can test `BuildGuard: Export Report as HTML` directly from the demo view.
 
 ### 2. Sample Projects (`test_samples/`)
-- `test_samples/compiler_hello`: C source sample with clean compilation and simulated wrapper configurations for testing compiler anomaly detection.
-- `test_samples/deps_clean_npm`: Sample project with verified dependency lockfile.
-- `test_samples/deps_vuln_npm`: Sample project containing known vulnerable dependencies for testing OSV advisory reporting.
+- `test_samples/compiler_hello`: Clean C compilation and simulated wrapper configurations for testing compiler anomaly detection.
+- `test_samples/compiler_wrapper_inject`: Sample demonstrating unauthorized compiler wrapper injection detection.
+- `test_samples/build_reproducible_c`: C project equipped with a pinned `buildguard.yml` container recipe demonstrating reproducible build matching (`MATCH`).
+- `test_samples/build_unreproducible_c`: C project demonstrating non-reproducible builds via embedded timestamps (`BUILD_MISMATCH`).
+- `test_samples/build_tampered_c`: Post-build artifact tampering sample demonstrating one-byte difference detection (`POST_BUILD_DIFF`).
+- `test_samples/deps_clean`: Clean project with verified dependency manifests.
+- `test_samples/deps_vuln_npm`: Node.js sample containing known vulnerable dependencies for testing OSV advisory reporting.
+- `test_samples/deps_suspicious_npm`: Node.js sample containing heuristic security indicators (lifecycle scripts, typosquatting, non-registry sources, missing integrity).
 - `test_samples/deps_vuln_cpp`: C/C++ sample using `vcpkg.json` for dependency scanning.
-- `test_samples/reproducible_c`: C project equipped with a pinned `buildguard.yml` container recipe for reproducible build testing.
+- `test_samples/deps_multi_package`: Multi-package monorepo sample containing npm, PyPI, Go, and lockfiles.
 
 ---
 
@@ -323,11 +451,21 @@ Run tests for `scripts/check_env.sh` (Node >= 20 validation):
 .venv/bin/pytest backend/tests/test_check_env.py -v
 ```
 
-### Extension Tests
-Run the VS Code extension test suite:
+### Extension Tests & Packaging
+Run the VS Code extension test suites and packaging commands:
 
 ```sh
+# Consolidated extension tests (Node test runner)
 npm --prefix extension test
+
+# Focused demo report fixture test
+npm --prefix extension run test:demo
+
+# Typecheck and lint extension TypeScript
+npm --prefix extension run lint
+
+# Package extension into .vsix artifact (buildguard-0.1.0.vsix)
+npm --prefix extension run package
 ```
 
 ### Docker-Dependent Tests

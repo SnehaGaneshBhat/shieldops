@@ -240,8 +240,9 @@ def test_cpp_unpinned_package(tmp_path, monkeypatch):
 
     result = run(tmp_path, {"offline": True})
     unresolved = [f for f in result.findings if f.category == "UNRESOLVED"]
-    assert len(unresolved) == 1
-    assert unresolved[0].evidence[0].data.get("reason") == "no_exact_version"
+    reasons = [e.data.get("reason") for f in unresolved for e in f.evidence]
+    assert "no_exact_version" in reasons
+    assert "osv_unreachable" in reasons
 
 
 def test_cpp_osv_failed_request(tmp_path, monkeypatch):

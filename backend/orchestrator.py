@@ -137,6 +137,47 @@ def _resolve_compiler_target(sample, project_path):
     return None
 
 
+def _resolve_build_target(options, project_path):
+    """Safely resolve build target directory and recipe.
+
+    1. If the workspace root contains the configured recipe, use the workspace root.
+    2. Otherwise, if an explicitly configured sample target (build_sample or compiler_sample)
+       resolves safely inside the workspace and contains the configured recipe, use that sample directory.
+    3. If neither condition applies, retain the original workspace root so Build Integrity
+       reports NOT_COMPARABLE.
+    """
+    proj = Path(project_path).resolve()
+    recipe_file = options.get('recipe_path') or 'buildguard.yml'
+    recipe_p = Path(recipe_file)
+
+    def _is_within(inner: Path, outer: Path) -> bool:
+        return inner == outer or outer in inner.parents
+
+    # 1. Workspace root contains the configured recipe
+    if not recipe_p.is_absolute():
+        recipe_in_proj = (proj / recipe_p).resolve()
+        if _is_within(recipe_in_proj, proj) and recipe_in_proj.is_file():
+            return str(proj)
+    elif recipe_p.is_file() and _is_within(recipe_p.resolve(), proj):
+        return str(proj)
+
+    # 2. Explicitly configured sample target (build_sample or compiler_sample)
+    sample = options.get('build_sample') or options.get('compiler_sample')
+    if sample:
+        sample_target = _resolve_compiler_target(sample, project_path)
+        if sample_target:
+            sample_dir = Path(sample_target).resolve()
+            if not recipe_p.is_absolute():
+                recipe_in_sample = (sample_dir / recipe_p).resolve()
+                if _is_within(recipe_in_sample, sample_dir) and recipe_in_sample.is_file():
+                    return str(sample_dir)
+            elif recipe_p.is_file() and _is_within(recipe_p.resolve(), sample_dir):
+                return str(sample_dir)
+
+    # 3. Retain the original workspace root
+    return str(proj)
+
+
 def _call_module(name, project_path, options):
     try:
         mod = importlib.import_module(ENTRY[name])
@@ -178,6 +219,9 @@ def _call_module(name, project_path, options):
                 'INVALID_INPUT',
                 f"compiler target '{sample or project_path}' is missing or not found in workspace"
             )
+
+    elif name == 'build':
+        target = _resolve_build_target(options, project_path)
 
     try:
         res = mod.run(target, options)
