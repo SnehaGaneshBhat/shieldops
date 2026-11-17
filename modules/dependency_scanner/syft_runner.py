@@ -9,6 +9,8 @@ ECOSYSTEMS = {
     "npm": "npm",
     "pypi": "PyPI",
     "golang": "Go",
+    "go": "Go",
+    "nuget": "NuGet",
     "cargo": "crates.io",
     "maven": "Maven",
     "vcpkg": "vcpkg",
@@ -55,14 +57,23 @@ def parse_purl(purl):
     return typ, name, version or None
 
 
-def run_syft(project_path, out_path, timeout=120):
+def run_syft(project_path, out_path, timeout=None):
+    if timeout is None:
+        try:
+            timeout = int(os.environ.get("BUILDGUARD_SYFT_TIMEOUT", 300))
+        except (ValueError, TypeError):
+            timeout = 300
+
     syft = os.environ.get("BUILDGUARD_SYFT_BIN", "syft")
     cmd = [
         syft,
         "scan",
         f"dir:{project_path}",
+        "--exclude", "**/.git/**",
+        "--exclude", "**/.buildguard/**",
         "-o",
         f"cyclonedx-json={out_path}",
+        "-q",
     ]
 
     try:
@@ -75,11 +86,11 @@ def run_syft(project_path, out_path, timeout=120):
         )
     except FileNotFoundError:
         raise SyftError("TOOL_MISSING", "syft not found")
-    except subprocess.TimeoutExpired:
-        raise SyftError("TIMEOUT", "syft timed out")
+    except subprocess.TimeoutExpired as exc:
+        raise SyftError("TIMEOUT", f"syft timed out after {timeout} seconds on {project_path}") from exc
 
     if result.returncode != 0:
-        raise SyftError("PARSE_ERROR", result.stderr[:300])
+        raise SyftError("PARSE_ERROR", (result.stderr or result.stdout)[:300])
 
     if not Path(out_path).is_file():
         raise SyftError("PARSE_ERROR", "Syft did not create the SBOM file")

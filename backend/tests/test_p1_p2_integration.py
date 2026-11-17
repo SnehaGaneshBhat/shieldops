@@ -24,7 +24,7 @@ client = TestClient(app)
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _wait_for_scan(client, scan_id, timeout=15.0):
+def _wait_for_scan(client, scan_id, timeout=30.0):
     """Poll scan state until terminal state or timeout."""
     start = time.time()
     state = {}

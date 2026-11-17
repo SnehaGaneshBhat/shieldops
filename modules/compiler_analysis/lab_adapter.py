@@ -1,6 +1,7 @@
 """Thin adapter around the shared P2 Docker runner."""
 
 import os
+from pathlib import Path
 
 try:
     from backend import docker_runner as dr
@@ -29,12 +30,25 @@ def check():
 def run_lab(sample_dir, out_dir, project_cc="clang", opt_level="-O0", strip=False, timeout=180):
     if dr is None:
         raise LabError("TOOL_MISSING", "backend/docker_runner.py not found")
+    mounts = [
+        (str(sample_dir), "/work/sample", "ro"),
+        (str(out_dir), "/out", "rw"),
+    ]
+    host_lab_run = Path(__file__).resolve().parents[2] / "docker" / "compiler-lab" / "lab_run.sh"
+    if host_lab_run.is_file():
+        mounts.append((str(host_lab_run), "/usr/local/bin/lab_run.sh", "ro"))
+
+    try:
+        os.chmod(out_dir, 0o777)
+    except OSError:
+        pass
+
     try:
         result = dr.run_container(
-            IMAGE, ["lab_run.sh"],
-            mounts=[(str(sample_dir), "/work/sample", "ro"), (str(out_dir), "/out", "rw")],
+            IMAGE, ["bash", "/usr/local/bin/lab_run.sh"],
+            mounts=mounts,
             env={"PROJECT_CC": project_cc, "BG_OPT": opt_level, "BG_STRIP": "1" if strip else "0"},
-            network="none", timeout=timeout,
+            network_none=True, timeout=timeout,
         )
     except Exception as exc:
         raise LabError(getattr(exc, "code", "DOCKER_UNAVAILABLE"), getattr(exc, "message", str(exc)),

@@ -41,6 +41,25 @@ def docker_available(timeout: int = 10) -> bool:
         return False
 
 
+
+def image_present(image: str, timeout: int = 15) -> bool:
+    """Return whether a Docker image exists locally."""
+    if not shutil.which(DOCKER_BIN):
+        return False
+
+    try:
+        result = subprocess.run(
+            [DOCKER_BIN, 'image', 'inspect', image],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def kill_scan_containers(scan_id: str) -> None:
     """Force-remove every container this scan started (names start with bg-<scan_id>)."""
     if not shutil.which(DOCKER_BIN):

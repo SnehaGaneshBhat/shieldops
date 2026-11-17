@@ -46,5 +46,8 @@ const server = http.createServer((req, res) => {
   res.writeHead(404); res.end(JSON.stringify({detail:'not found'}));
 });
 const port=Number(process.env.BUILDGUARD_MOCK_PORT||8788);
-server.listen(port,'127.0.0.1',()=>console.log(`BuildGuard mock listening at http://127.0.0.1:${port}`));
+server.listen(port, '127.0.0.1', () => {
+  const actualPort = server.address().port;
+  console.log(`BuildGuard mock listening at http://127.0.0.1:${actualPort}`);
+});
 for(const signal of ['SIGINT','SIGTERM']) process.on(signal,()=>server.close(()=>process.exit(0)));

@@ -11,9 +11,12 @@ REG = "https://registry.npmjs.org/"
 def load_meta(pkg, project, offline=False, http=None):
     metadata = {}
     root = Path(project)
+    manifest_dir = Path(pkg.manifest).parent if pkg.manifest else root
 
     if pkg.local_dir:
-        local_file = root / pkg.local_dir / "package.json"
+        local_file = manifest_dir / pkg.local_dir / "package.json"
+        if not local_file.is_file():
+            local_file = root / pkg.local_dir / "package.json"
         if local_file.is_file():
             try:
                 metadata["scripts"] = json.loads(
@@ -23,9 +26,14 @@ def load_meta(pkg, project, offline=False, http=None):
                 pass
 
     fixture = (
-        root / "registry_fixtures"
+        manifest_dir / "registry_fixtures"
         / (pkg.name.replace("/", "__") + ".json")
     )
+    if not fixture.is_file():
+        fixture = (
+            root / "registry_fixtures"
+            / (pkg.name.replace("/", "__") + ".json")
+        )
     if fixture.is_file():
         try:
             metadata.update(

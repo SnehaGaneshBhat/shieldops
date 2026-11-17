@@ -88,8 +88,14 @@ def _correlations(findings):
 def correlate(results, scan_id=None):
     findings, module_status, versions = [], {}, {}
     for result in results:
-        module_status[result["module"]] = {"status": result["status"], "errors": result.get("errors", []),
-                                           "checks_performed": result.get("checks_performed", [])}
+        status_info = {
+            "status": result["status"],
+            "errors": result.get("errors", []),
+            "checks_performed": result.get("checks_performed", []),
+        }
+        if result.get("tool_versions", {}).get("target"):
+            status_info["target"] = result["tool_versions"]["target"]
+        module_status[result["module"]] = status_info
         versions[result["module"]] = result.get("tool_versions", {})
         for original in result.get("findings", []):
             finding = json.loads(json.dumps(original))
